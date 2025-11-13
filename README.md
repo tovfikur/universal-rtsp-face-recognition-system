@@ -2,6 +2,31 @@
 
 Complete API-driven attendance management system built on top of a high-performance face recognition engine. Combines YOLOv8 person detection, dlib face recognition, and a comprehensive REST API for managing attendance records.
 
+## 📚 Documentation Navigation
+
+| Document | Description |
+|----------|-------------|
+| **[Quick Start Guide](QUICK_START.md)** | Get started in minutes |
+| **[Setup Guide](SETUP_GUIDE.md)** | Detailed installation and setup instructions |
+| **[API Documentation](API_DOCUMENTATION.md)** | Complete API reference with examples |
+| **[API Endpoints](API_ENDPOINTS.md)** | Comprehensive list of all API endpoints |
+| **[Project Overview](PROJECT_OVERVIEW.md)** | Architecture and system design |
+| **[Complete Workflow](COMPLETE_WORKFLOW.md)** | End-to-end workflow documentation |
+| **[Implementation Summary](IMPLEMENTATION_SUMMARY.md)** | Technical implementation details |
+| **[Integration Complete](INTEGRATION_COMPLETE.md)** | Integration capabilities |
+
+### Feature-Specific Documentation
+
+| Feature | Documentation |
+|---------|---------------|
+| **Odoo Integration** | [Integration Guide](ODOO_INTEGRATION.md) · [Module Integration](ODOO_MODULE_INTEGRATION.md) · [API Integration](ODOO_API_INTEGRATION.md) · [Quick Start](ODOO_QUICK_START.md) · [Implementation](ODOO_IMPLEMENTATION_SUMMARY.md) |
+| **RTSP Streaming** | [Optimization](RTSP_OPTIMIZATION.md) · [Frontend Fix](RTSP_FRONTEND_FIX.md) · [Video Preview](RTSP_VIDEO_PREVIEW_FIX.md) · [Troubleshooting](RTSP_TROUBLESHOOTING.md) · [Fix Summary](RTSP_FIX_SUMMARY.md) |
+| **Advanced Features** | [Multi-Source Input](MULTI_SOURCE_INPUT.md) · [Performance Optimization](PERFORMANCE_OPTIMIZATION.md) · [Auto Resolution Scaling](AUTO_RESOLUTION_SCALING.md) · [Distance/Angle Enhancement](DISTANCE_ANGLE_ENHANCEMENT.md) |
+| **Recognition System** | [Person Detection Accuracy](PERSON_DETECTION_ACCURACY.md) · [Tracking System](TRACKING_SYSTEM.md) · [Tracker Cleanup](TRACKER_CLEANUP_FIX.md) |
+| **Configuration** | [Registration Fixes](REGISTRATION_FIXES.md) · [Frontend/Backend Verification](FRONTEND_BACKEND_VERIFICATION.md) |
+
+---
+
 ## Highlights
 
 ### Core Recognition System
