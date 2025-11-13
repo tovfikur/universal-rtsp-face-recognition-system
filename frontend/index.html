@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Recognition Console</title>
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+
+    <!-- Bootstrap 5 -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+
+    <!-- Font Awesome 6 -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+
+    <!-- Custom Styles -->
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <!-- Top Navigation Bar -->
+    <nav class="navbar navbar-dark sticky-top">
+        <div class="container-fluid px-4">
+            <div class="navbar-brand d-flex align-items-center gap-3">
+                <div class="logo-container">
+                    <i class="fas fa-shield-halved"></i>
+                </div>
+                <div class="brand-text">
+                    <h1 class="brand-title mb-0">Smart Recognition Console</h1>
+                    <p class="brand-subtitle mb-0">AI-Powered Security & Monitoring</p>
+                </div>
+            </div>
+
+            <div class="d-flex align-items-center gap-3">
+                <!-- Navigation Links -->
+                <nav class="nav-links">
+                    <a href="index.html" class="nav-link active">
+                        <i class="fas fa-video"></i>
+                        <span>Live Monitor</span>
+                    </a>
+                    <a href="faces.html" class="nav-link">
+                        <i class="fas fa-address-book"></i>
+                        <span>Registered Faces</span>
+                    </a>
+                    <a href="timeline.html" class="nav-link">
+                        <i class="fas fa-clock-rotate-left"></i>
+                        <span>Timeline</span>
+                    </a>
+                </nav>
+
+                <!-- System Status Indicator -->
+                <div class="system-status" id="systemStatus">
+                    <span class="status-dot offline"></span>
+                    <span class="status-text">System Offline</span>
+                </div>
+
+                <!-- Settings Button -->
+                <button class="btn btn-icon btn-settings" data-bs-toggle="offcanvas" data-bs-target="#settingsPanel"
+                        data-bs-toggle="tooltip" title="Camera Settings">
+                    <i class="fas fa-sliders"></i>
+                </button>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="container-fluid main-content">
+        <div class="row g-4">
+            <!-- Left Column: Video Feed -->
+            <div class="col-lg-8">
+                <!-- Video Panel -->
+                <section class="card video-card">
+                    <div class="card-header">
+                        <div class="header-content">
+                            <div>
+                                <h2 class="card-title">
+                                    <i class="fas fa-video"></i>
+                                    Live Video Feed
+                                </h2>
+                                <p class="card-subtitle">Real-time person detection and face recognition</p>
+                            </div>
+                        </div>
+
+                        <!-- Control Buttons -->
+                        <div class="control-buttons">
+                            <button id="startCameraBtn" class="btn btn-primary" data-bs-toggle="tooltip" title="Start camera stream">
+                                <i class="fas fa-play"></i>
+                                <span>Start Camera</span>
+                            </button>
+                            <button id="stopCameraBtn" class="btn btn-secondary d-none" data-bs-toggle="tooltip" title="Stop camera stream">
+                                <i class="fas fa-stop"></i>
+                                <span>Stop</span>
+                            </button>
+                            <button id="registerFaceBtn" class="btn btn-success" data-bs-toggle="modal"
+                                    data-bs-target="#registerModal" data-bs-toggle="tooltip" title="Register new person">
+                                <i class="fas fa-user-plus"></i>
+                                <span>Add Person</span>
+                            </button>
+                            <button id="startRemoteBtn" class="btn btn-info" data-bs-toggle="tooltip" title="Connect RTSP stream">
+                                <i class="fas fa-broadcast-tower"></i>
+                                <span>RTSP</span>
+                            </button>
+                            <button id="clearDataBtn" class="btn btn-danger" data-bs-toggle="tooltip" title="Clear all registered faces">
+                                <i class="fas fa-trash-alt"></i>
+                                <span>Clear Data</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="card-body">
+                        <!-- Video Container -->
+                        <div class="video-container">
+                            <video id="liveVideo" autoplay playsinline muted></video>
+                            <canvas id="overlayCanvas"></canvas>
+                            <img id="remoteStream" class="remote-stream d-none" alt="Remote stream" />
+
+                            <!-- Loading Overlay -->
+                            <div class="loading-overlay" id="loadingOverlay">
+                                <div class="spinner-border text-primary" role="status"></div>
+                                <span class="loading-text">Initializing camera...</span>
+                            </div>
+
+                            <!-- Watermark -->
+                            <div class="video-watermark">
+                                <i class="fas fa-shield-halved"></i>
+                                Smart Recognition
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Status Footer -->
+                    <div class="card-footer">
+                        <div class="status-item">
+                            <i class="fas fa-users"></i>
+                            <span class="status-label">Detected:</span>
+                            <span class="status-value" id="recognizedCounter">0</span>
+                        </div>
+                        <div class="status-item">
+                            <i class="fas fa-tachometer-alt"></i>
+                            <span class="status-label">FPS:</span>
+                            <span class="status-value" id="fpsCounter">0</span>
+                        </div>
+                        <div class="status-item">
+                            <i class="fas fa-camera"></i>
+                            <span class="status-label">Source:</span>
+                            <span class="status-value" id="sourceDisplay">None</span>
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <!-- Right Column: Tabbed Interface -->
+            <div class="col-lg-4">
+                <section class="card">
+                    <!-- Tab Navigation -->
+                    <div class="card-header">
+                        <ul class="nav nav-tabs card-header-tabs" id="rightPanelTabs" role="tablist">
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link active" id="snapshot-tab" data-bs-toggle="tab"
+                                        data-bs-target="#snapshot-panel" type="button" role="tab">
+                                    <i class="fas fa-camera-retro"></i>
+                                    <span>Snapshot</span>
+                                </button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="persons-tab" data-bs-toggle="tab"
+                                        data-bs-target="#persons-panel" type="button" role="tab">
+                                    <i class="fas fa-users"></i>
+                                    <span>Persons</span>
+                                </button>
+                            </li>
+                        </ul>
+                    </div>
+
+                    <!-- Tab Content -->
+                    <div class="tab-content" id="rightPanelContent">
+                        <!-- Snapshot Tab -->
+                        <div class="tab-pane fade show active" id="snapshot-panel" role="tabpanel">
+                            <div class="card-body">
+                                <!-- Main Snapshot -->
+                                <div class="snapshot-container mb-3">
+                                    <img id="snapshotImage" class="snapshot-image d-none" alt="Analysis snapshot" />
+                                    <div class="snapshot-placeholder" id="snapshotPlaceholder">
+                                        <i class="fas fa-image"></i>
+                                        <p>No snapshot available yet</p>
+                                        <small class="text-muted">Start camera to begin analysis</small>
+                                    </div>
+                                </div>
+
+                                <!-- Snapshot History Grid (2x2) -->
+                                <div class="snapshot-history-label mb-2">
+                                    <i class="fas fa-history"></i>
+                                    <span>Recent Snapshots</span>
+                                </div>
+                                <div class="snapshot-history-grid" id="snapshotHistoryGrid">
+                                    <div class="snapshot-thumbnail-placeholder">
+                                        <i class="fas fa-image"></i>
+                                    </div>
+                                    <div class="snapshot-thumbnail-placeholder">
+                                        <i class="fas fa-image"></i>
+                                    </div>
+                                    <div class="snapshot-thumbnail-placeholder">
+                                        <i class="fas fa-image"></i>
+                                    </div>
+                                    <div class="snapshot-thumbnail-placeholder">
+                                        <i class="fas fa-image"></i>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="card-footer">
+                                <div class="status-item">
+                                    <i class="fas fa-clock"></i>
+                                    <span class="status-label">Last Update:</span>
+                                    <span class="status-value" id="snapshotTime">--</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Persons Management Tab -->
+                        <div class="tab-pane fade" id="persons-panel" role="tabpanel">
+                            <div class="card-body">
+                                <!-- Statistics -->
+                                <div class="persons-stats mb-3">
+                                    <div class="row g-2">
+                                        <div class="col-6">
+                                            <div class="stat-mini">
+                                                <div class="stat-value" id="totalPersons">0</div>
+                                                <div class="stat-label">Total</div>
+                                            </div>
+                                        </div>
+                                        <div class="col-6">
+                                            <div class="stat-mini">
+                                                <div class="stat-value" id="withFaces">0</div>
+                                                <div class="stat-label">With Faces</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Search Box -->
+                                <div class="mb-3">
+                                    <input type="text" id="personSearchBox" class="form-control form-control-sm"
+                                           placeholder="🔍 Search persons...">
+                                </div>
+
+                                <!-- Persons List -->
+                                <div id="personsListContent" class="persons-list-container">
+                                    <div class="text-center text-muted py-4">
+                                        <div class="spinner-border spinner-border-sm mb-2" role="status"></div>
+                                        <p class="mb-0 small">Loading persons...</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="card-footer">
+                                <button class="btn btn-sm btn-primary w-100" onclick="refreshPersonsList()">
+                                    <i class="fas fa-sync-alt"></i>
+                                    Refresh
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </div>
+    </main>
+
+    <!-- Register Face Modal -->
+    <div class="modal fade" id="registerModal" tabindex="-1" aria-labelledby="registerModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <form id="registerForm">
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="registerModalLabel">
+                            <i class="fas fa-user-plus"></i>
+                            Register New Person
+                        </h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="alert alert-info d-flex align-items-center mb-3">
+                            <i class="fas fa-info-circle me-2"></i>
+                            <small>Ensure the person's face is clearly visible in the camera before saving.</small>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="personName" class="form-label">
+                                <i class="fas fa-signature"></i>
+                                Full Name
+                            </label>
+                            <input type="text" class="form-control" id="personName"
+                                   placeholder="Enter person's full name" required>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="personId" class="form-label">
+                                <i class="fas fa-id-badge"></i>
+                                Person ID / Badge Number
+                            </label>
+                            <input type="text" class="form-control" id="personId"
+                                   placeholder="e.g., EMP001, STU12345, or Badge #123" required>
+                            <div class="form-text">
+                                <i class="fas fa-lightbulb"></i>
+                                Unique identifier (Employee ID, Student ID, etc.)
+                            </div>
+                        </div>
+
+                        <div class="face-preview-container">
+                            <div class="face-preview">
+                                <i class="fas fa-camera"></i>
+                                <p>Live preview from camera</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                            <i class="fas fa-xmark"></i>
+                            Cancel
+                        </button>
+                        <button type="submit" class="btn btn-success">
+                            <i class="fas fa-floppy-disk"></i>
+                            Save Person
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Clear Data Confirmation Modal -->
+    <div class="modal fade" id="clearDataModal" tabindex="-1" aria-labelledby="clearDataModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title text-danger" id="clearDataModalLabel">
+                        <i class="fas fa-triangle-exclamation"></i>
+                        Confirm Data Deletion
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-warning d-flex align-items-center">
+                        <i class="fas fa-exclamation-triangle me-2"></i>
+                        <div>
+                            <strong>Warning:</strong> This action cannot be undone!
+                        </div>
+                    </div>
+                    <p>Are you sure you want to delete all registered faces and clear the database?</p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                        <i class="fas fa-xmark"></i>
+                        Cancel
+                    </button>
+                    <button type="button" class="btn btn-danger" id="confirmClearBtn">
+                        <i class="fas fa-trash-alt"></i>
+                        Yes, Delete All
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings Offcanvas Panel -->
+    <div class="offcanvas offcanvas-end" tabindex="-1" id="settingsPanel" aria-labelledby="settingsPanelLabel">
+        <div class="offcanvas-header">
+            <h5 class="offcanvas-title" id="settingsPanelLabel">
+                <i class="fas fa-sliders"></i>
+                Camera Source Settings
+            </h5>
+            <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+        </div>
+        <div class="offcanvas-body">
+            <p class="text-muted small mb-4">
+                <i class="fas fa-info-circle"></i>
+                Configure video input source for face recognition
+            </p>
+
+            <!-- Current Source Display -->
+            <div class="alert alert-primary d-flex align-items-center mb-3">
+                <i class="fas fa-circle-info me-2"></i>
+                <div class="w-100">
+                    <small class="d-block mb-1"><strong>Current Source:</strong></small>
+                    <span id="currentSourceText" class="small">Not connected</span>
+                </div>
+            </div>
+
+            <!-- Source Input -->
+            <div class="mb-4">
+                <label for="cameraSourceInput" class="form-label fw-semibold">
+                    <i class="fas fa-video"></i>
+                    Video Source
+                </label>
+                <input type="text" class="form-control" id="cameraSourceInput"
+                       placeholder="0">
+                <div class="form-text mt-2">
+                    <i class="fas fa-lightbulb"></i>
+                    Enter webcam index (e.g., 0, 1) or stream URL
+                </div>
+            </div>
+
+            <!-- Quick Examples -->
+            <div class="mb-4">
+                <label class="form-label fw-semibold">
+                    <i class="fas fa-list"></i>
+                    Quick Examples:
+                </label>
+                <div class="d-grid gap-2">
+                    <button class="btn btn-outline-secondary text-start example-btn" data-source="0">
+                        <i class="fas fa-camera"></i>
+                        <div class="d-inline-block ms-2">
+                            <strong>Webcam 0</strong>
+                            <small class="d-block text-muted">Default built-in camera</small>
+                        </div>
+                    </button>
+                    <button class="btn btn-outline-secondary text-start example-btn" data-source="1">
+                        <i class="fas fa-camera"></i>
+                        <div class="d-inline-block ms-2">
+                            <strong>Webcam 1</strong>
+                            <small class="d-block text-muted">External USB camera</small>
+                        </div>
+                    </button>
+                    <button class="btn btn-outline-secondary text-start example-btn" data-source="rtsp://admin:password@192.168.1.100:554/stream">
+                        <i class="fas fa-tower-broadcast"></i>
+                        <div class="d-inline-block ms-2">
+                            <strong>RTSP Stream</strong>
+                            <small class="d-block text-muted">IP Camera / CCTV</small>
+                        </div>
+                    </button>
+                    <button class="btn btn-outline-secondary text-start example-btn" data-source="http://192.168.1.100:8080/video">
+                        <i class="fas fa-globe"></i>
+                        <div class="d-inline-block ms-2">
+                            <strong>HTTP Stream</strong>
+                            <small class="d-block text-muted">MJPEG over HTTP</small>
+                        </div>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Supported Formats -->
+            <div class="mb-4">
+                <label class="form-label fw-semibold">
+                    <i class="fas fa-list-check"></i>
+                    Supported Formats:
+                </label>
+                <ul class="list-unstyled small text-muted ms-3">
+                    <li><i class="fas fa-check text-success"></i> Webcam: <code>0</code>, <code>1</code>, <code>2</code></li>
+                    <li><i class="fas fa-check text-success"></i> RTSP: <code>rtsp://user:pass@ip:port/path</code></li>
+                    <li><i class="fas fa-check text-success"></i> HTTP: <code>http://ip:port/stream.mjpg</code></li>
+                    <li><i class="fas fa-check text-success"></i> RTMP: <code>rtmp://ip:port/app/stream</code></li>
+                    <li><i class="fas fa-check text-success"></i> File: <code>/path/to/video.mp4</code></li>
+                </ul>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="d-grid gap-2 mb-3">
+                <button class="btn btn-primary" id="applyCameraSourceBtn">
+                    <i class="fas fa-check"></i>
+                    Apply & Connect
+                </button>
+                <button class="btn btn-outline-secondary" id="validateSourceBtn">
+                    <i class="fas fa-magnifying-glass"></i>
+                    Test Connection
+                </button>
+            </div>
+
+            <!-- Status Messages -->
+            <div id="sourceStatus" class="mt-3"></div>
+        </div>
+    </div>
+
+    <!-- Toast Container for Notifications -->
+    <div id="alertContainer" class="toast-container"></div>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+
+    <!-- Custom Script -->
+    <script src="script.js"></script>
+
+    <!-- Initialize Tooltips -->
+    <script>
+        // Initialize Bootstrap tooltips
+        document.addEventListener('DOMContentLoaded', function() {
+            const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+            tooltipTriggerList.map(function (tooltipTriggerEl) {
+                return new bootstrap.Tooltip(tooltipTriggerEl);
+            });
+        });
+    </script>
+</body>
+
+</html>
