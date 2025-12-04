@@ -38,4 +38,4 @@ RUN mkdir -p /app/backend/data /app/backend/faces
 
 EXPOSE 5000
 
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "2", "--threads", "4", "app:app"]
+CMD ["hypercorn", "--bind", "0.0.0.0:5000", "--workers", "2", "app:app"]

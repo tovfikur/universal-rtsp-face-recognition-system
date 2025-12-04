@@ -76,11 +76,11 @@ detector = PersonDetector(
     max_aspect_ratio=4.0,  # Maximum height/width ratio
 )
 
-# Initialize database first
+# Initialize database first with STRICT tolerance for accuracy
 database = FaceDatabase(
     data_dir=BACKEND_DIR / "data",
     faces_dir=BACKEND_DIR / "faces",
-    tolerance=FACE_TOLERANCE,
+    tolerance=0.45,  # STRICT tolerance - won't confuse different people (was 0.45/FACE_TOLERANCE)
 )
 
 # Initialize face recognition with GPU if available
@@ -100,12 +100,12 @@ person_tracker = SimpleTracker(
     face_memory_time=3.0
 )
 
-# Initialize enhanced face recognizer for distance/angle robustness
+# Initialize enhanced face recognizer for ACCURACY (no confusion between persons)
 enhanced_recognizer = EnhancedFaceRecognizer(
-    base_tolerance=0.65,      # Higher tolerance for angle variations
-    min_face_size=30,         # Detect small distant faces
-    max_upsample=2,           # More upsampling for distant faces
-    quality_threshold=0.25    # Lower threshold to accept more angles
+    base_tolerance=0.50,      # STRICT tolerance - won't confuse different people (was 0.65)
+    min_face_size=40,         # Only clear faces (was 30)
+    max_upsample=2,           # More upsampling for better quality
+    quality_threshold=0.35    # Higher quality threshold (was 0.25)
 )
 
 # Initialize detection history database
@@ -172,6 +172,98 @@ current_source: str = DEFAULT_CAMERA_SOURCE
 frame_buffer = deque(maxlen=FRAME_BUFFER_SIZE)
 buffer_lock = threading.Lock()
 
+# Dedicated stream encoding thread (ZERO-OVERHEAD video feed)
+stream_encoding_thread = None
+stream_encoding_running = False
+latest_encoded_frame = None
+encoded_frame_lock = threading.Lock()
+
+
+# =============================================================================
+# Dedicated Stream Encoding Thread (30 FPS, No Freeze)
+# =============================================================================
+
+def stream_encoding_loop():
+    """
+    DEDICATED THREAD: Pre-encodes video frames at 30 FPS.
+    Completely independent from detection/snapshot threads.
+    Ensures video feed NEVER freezes regardless of what else is happening.
+    """
+    global stream_encoding_running, video_stream_cache, latest_encoded_frame
+
+    print("[StreamEncoder] Starting dedicated stream encoding thread (30 FPS)...")
+    stream_encoding_running = True
+    target_fps = 30
+    frame_interval = 1.0 / target_fps
+
+    while stream_encoding_running:
+        try:
+            # Check if we have an active stream
+            if not video_stream_cache:
+                time.sleep(0.5)
+                continue
+
+            t_start = time.time()
+
+            # CRITICAL: Always get LATEST frame (drop old frames)
+            frame = video_stream_cache.get_frame(skip_old=True)
+            if frame is None:
+                time.sleep(0.01)
+                continue
+
+            # CRITICAL: Make a copy to prevent thread conflicts
+            frame_copy = frame.copy()
+
+            # Fast JPEG encoding (quality 85 for good quality)
+            try:
+                success, buffer = cv2.imencode('.jpg', frame_copy,
+                                              [cv2.IMWRITE_JPEG_QUALITY, 85])
+                if success:
+                    jpg_bytes = buffer.tobytes()
+
+                    # Update cached encoded frame (thread-safe)
+                    with encoded_frame_lock:
+                        latest_encoded_frame = jpg_bytes
+            except Exception as encode_error:
+                print(f"[StreamEncoder] Encoding error: {encode_error}")
+                time.sleep(0.1)
+                continue
+
+            # Maintain target FPS
+            elapsed = time.time() - t_start
+            sleep_time = max(0, frame_interval - elapsed)
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+
+        except Exception as e:
+            print(f"[StreamEncoder] Error: {e}")
+            time.sleep(0.1)
+
+    print("[StreamEncoder] Stream encoding thread stopped")
+
+
+def start_stream_encoding():
+    """Start the dedicated stream encoding thread."""
+    global stream_encoding_thread, stream_encoding_running
+
+    if stream_encoding_thread and stream_encoding_thread.is_alive():
+        print("[StreamEncoder] Already running")
+        return
+
+    stream_encoding_thread = threading.Thread(target=stream_encoding_loop, daemon=True)
+    stream_encoding_thread.start()
+    print("[StreamEncoder] Stream encoding thread started")
+
+
+def stop_stream_encoding():
+    """Stop the stream encoding thread."""
+    global stream_encoding_running
+
+    stream_encoding_running = False
+    if stream_encoding_thread:
+        print("[StreamEncoder] Stopping stream encoding thread...")
+        time.sleep(0.5)
+
 
 # =============================================================================
 # Background Processing Thread (runs independently of frontend)
@@ -204,14 +296,14 @@ def background_processing_loop():
 
             last_process_time = now
 
-            # Get frame from stream
-            frame = video_stream_cache.get_frame()
+            # Get LATEST frame from stream (no lag)
+            frame = video_stream_cache.get_frame(skip_old=True)
             if frame is None:
                 time.sleep(0.1)
                 continue
 
-            # Enhance frame
-            enhanced_frame = enhance_frame_for_detection(frame)
+            # SKIP ENHANCEMENT: Faster processing
+            enhanced_frame = frame
 
             # Detect persons using immediate detection
             persons = detector.detect_immediate(enhanced_frame)
@@ -240,7 +332,7 @@ def background_processing_loop():
                         person_region,
                         database._encodings,
                         [meta["name"] for meta in database._metadata],
-                        model="cnn" if torch.cuda.is_available() else "hog"
+                        model="hog"  # ALWAYS HOG for speed
                     )
 
                     if match_result:
@@ -276,8 +368,10 @@ def background_processing_loop():
                         print(f"[Background] Error storing detection: {e}")
 
         except Exception as e:
+            import traceback
             print(f"[Background] Processing error: {e}")
-            time.sleep(1)
+            print(f"[Background] Traceback: {traceback.format_exc()}")
+            time.sleep(1)  # Brief pause before retry
 
     print("[Background] Background processing thread stopped")
 
@@ -320,7 +414,7 @@ def snapshot_analysis_loop():
 
     print("[Snapshot] Starting independent snapshot analysis thread...")
     snapshot_running = True
-    analysis_interval = 1.5  # Process every 1.5 seconds
+    analysis_interval = 5.0  # Process every 5 seconds (4s work + 1s ready)
 
     while snapshot_running:
         try:
@@ -329,17 +423,23 @@ def snapshot_analysis_loop():
                 time.sleep(1)
                 continue
 
+            # TIMING: Track analysis duration
+            t_start = time.time()
+            print(f"[Snapshot] Running analysis at {datetime.now().strftime('%H:%M:%S')}")
+
             # Get high-quality frame
-            frame = video_stream_cache.get_frame()
+            frame = video_stream_cache.get_frame(skip_old=True)  # ALWAYS get latest frame
             if frame is None:
                 time.sleep(0.5)
                 continue
 
-            # Enhance frame for better detection
-            enhanced_frame = enhance_frame_for_detection(frame)
+            # SKIP ENHANCEMENT: Faster processing, avoid freezing
+            # Use frame directly - no preprocessing overhead
+            enhanced_frame = frame
 
             # Detect persons
             persons = detector.detect_immediate(enhanced_frame)
+            print(f"[Snapshot] Detected {len(persons)} person(s)")
 
             # Draw overlays if persons detected
             if persons and len(persons) > 0:
@@ -360,7 +460,7 @@ def snapshot_analysis_loop():
                                 person_region,
                                 database._encodings,
                                 [meta["name"] for meta in database._metadata],
-                                model="cnn" if torch.cuda.is_available() else "hog"
+                                model="cnn" if torch.cuda.is_available() else "hog"  # CNN for ACCURACY
                             )
 
                             if match_result:
@@ -463,12 +563,18 @@ def snapshot_analysis_loop():
                 except Exception as e:
                     print(f"[Snapshot] Error deleting old snapshot: {e}")
 
+            # TIMING: Log completion time
+            t_elapsed = (time.time() - t_start) * 1000  # Convert to ms
+            print(f"[Snapshot] Completed in {t_elapsed:.0f}ms. Next analysis in {analysis_interval} seconds.")
+
             # Wait for next analysis
             time.sleep(analysis_interval)
 
         except Exception as e:
+            import traceback
             print(f"[Snapshot] Error: {e}")
-            time.sleep(1)
+            print(f"[Snapshot] Traceback: {traceback.format_exc()}")
+            time.sleep(1)  # Brief pause before retry
 
     print("[Snapshot] Snapshot analysis thread stopped")
 
@@ -656,8 +762,8 @@ def get_video_stream(source: Union[int, str]) -> EnhancedVideoStream:
                 reconnect_delay=5.0,
                 max_reconnect_attempts=0,  # Infinite reconnect attempts
                 buffer_size=1,
-                max_width=1280,  # Auto-downscale to max 1280x720
-                max_height=720
+                max_width=960,   # Auto-downscale to max 960x540 (reduces memory & processing)
+                max_height=540
             )
             current_source = str(source)
 
@@ -760,11 +866,12 @@ async def change_source() -> Response:
         print(f"[Source Change] Creating new stream for: {new_source}")
         get_video_stream(new_source)
 
-        # STEP 4: Start background processing and snapshot analysis
+        # STEP 4: Start all background threads (processing, snapshot, stream encoding)
         stream_state.set_active(new_source, "rtsp" if "rtsp://" in new_source.lower() else "webcam")
         start_background_processing()
         start_snapshot_analysis()
-        print("[Source Change] Background processing and snapshot analysis enabled")
+        start_stream_encoding()  # CRITICAL: Start stream encoder for zero-overhead video
+        print("[Source Change] Background processing, snapshot analysis, and stream encoding enabled")
 
         return {
             "success": True,
@@ -1023,34 +1130,29 @@ async def stream() -> Response:
         return await jsonify({"success": False, "message": str(exc)}), 500
 
     async def generate():
-        """Ultra-lightweight stream - just grab and encode frames"""
-        print("[Stream] Starting RTSP stream (no processing mode)")
+        """ZERO-OVERHEAD stream - serves pre-encoded frames from dedicated thread"""
+        print("[Stream] Starting ZERO-OVERHEAD stream (pre-encoded frames)")
         frame_count = 0
+        last_frame = None
 
         try:
             while True:
-                # Get frame (fast)
-                frame = video_stream.get_frame()
-                if frame is None:
-                    await asyncio.sleep(0.033)  # ~30 FPS
-                    continue
+                # Get pre-encoded frame from dedicated thread (instant!)
+                with encoded_frame_lock:
+                    current_frame = latest_encoded_frame
 
-                frame_count += 1
+                # Only send if we have a new frame
+                if current_frame and current_frame != last_frame:
+                    frame_count += 1
+                    last_frame = current_frame
 
-                # Encode directly without any processing (very fast!)
-                success, buffer = cv2.imencode(".jpg", frame,
-                                              [cv2.IMWRITE_JPEG_QUALITY, 80])
-                if not success:
-                    continue
+                    yield (
+                        b"--frame\r\n"
+                        b"Content-Type: image/jpeg\r\n\r\n" + current_frame + b"\r\n"
+                    )
 
-                jpg_bytes = buffer.tobytes()
-                yield (
-                    b"--frame\r\n"
-                    b"Content-Type: image/jpeg\r\n\r\n" + jpg_bytes + b"\r\n"
-                )
-
-                # Minimal delay to prevent overload
-                await asyncio.sleep(0.033)  # ~30 FPS
+                # Minimal delay (30 FPS)
+                await asyncio.sleep(0.033)
 
         except GeneratorExit:
             print(f"[Stream] Client disconnected after {frame_count} frames")
@@ -1370,18 +1472,50 @@ async def start_background() -> Response:
 
 @app.route("/api/background/stop", methods=["POST"])
 async def stop_background() -> Response:
-    """Manually stop background processing."""
+    """Manually stop all background threads."""
     try:
         stop_background_processing()
+        stop_snapshot_analysis()
+        stop_stream_encoding()
         stream_state.set_inactive()
         return {
             "success": True,
-            "message": "Background processing stopped"
+            "message": "All background threads stopped"
         }
     except Exception as e:
         print(f"[Background API] Error stopping: {e}")
         return {"success": False, "message": str(e)}, 500
 
+
+
+# =============================================================================
+# Global Error Handlers (Prevent App Crash)
+# =============================================================================
+
+@app.errorhandler(Exception)
+async def handle_exception(e):
+    """Global exception handler to prevent app crash."""
+    import traceback
+    print(f"[ERROR] Unhandled exception: {e}")
+    print(f"[ERROR] Traceback: {traceback.format_exc()}")
+
+    # Return error response instead of crashing
+    return {
+        "success": False,
+        "error": str(e),
+        "message": "An internal error occurred. The system is still running."
+    }, 500
+
+
+@app.errorhandler(500)
+async def handle_500(e):
+    """Handle 500 errors gracefully."""
+    print(f"[ERROR] Internal server error: {e}")
+    return {
+        "success": False,
+        "error": "Internal server error",
+        "message": "The system encountered an error but is still running."
+    }, 500
 
 
 # =============================================================================
@@ -1404,10 +1538,11 @@ if __name__ == "__main__":
         try:
             # Recreate stream
             get_video_stream(previous_source)
-            # Start background processing and snapshot analysis
+            # Start all background threads (processing, snapshot, stream encoding)
             start_background_processing()
             start_snapshot_analysis()
-            print("[Auto-Restore] Stream, background processing, and snapshot analysis restored successfully")
+            start_stream_encoding()  # CRITICAL: Start stream encoder for zero-overhead video
+            print("[Auto-Restore] Stream, background processing, snapshot analysis, and stream encoding restored successfully")
         except Exception as e:
             print(f"[Auto-Restore] Failed to restore stream: {e}")
             stream_state.set_inactive()

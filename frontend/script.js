@@ -693,13 +693,13 @@ const startCamera = async () => {
     ui.loadingOverlay.classList.add("d-none");
     updateStatus("Streaming", "success");
     startRecognitionLoop();
-    startSnapshotUpdates(); // Start snapshot display updates
-    showAlert("Camera started successfully");
+    // NOTE: Snapshot updates NOT started - only for background detection mode
+    showAlert("Camera started (preview only) - Click RTSP button for detection");
 
     // Update UI buttons and source display
     if (ui.startCameraBtn) ui.startCameraBtn.classList.add("d-none");
     if (ui.stopCameraBtn) ui.stopCameraBtn.classList.remove("d-none");
-    if (ui.sourceDisplay) ui.sourceDisplay.textContent = "Webcam";
+    if (ui.sourceDisplay) ui.sourceDisplay.textContent = "Webcam (Preview)";
   } catch (error) {
     console.error(error);
     ui.loadingOverlay.classList.add("d-none");
@@ -999,7 +999,7 @@ const changeVideoSource = async () => {
         if (onloadCount === 1) {
           console.log("[Remote] Starting recognition loop from onload (first time)");
           startRecognitionLoop();
-          startSnapshotUpdates(); // Start snapshot display updates
+          // NOTE: Snapshot updates NOT started - user must click RTSP button for detection
         }
       };
 
@@ -1029,7 +1029,7 @@ const changeVideoSource = async () => {
       }, 3000); // Check every 3 seconds
 
       // Update status after short delay
-      setTimeout(() => {
+      setTimeout(async () => {
         console.log("[Remote] setTimeout callback executing!");
         updateStatus("Streaming (Remote)", "success");
         ui.loadingOverlay.classList.add("d-none");
@@ -1043,15 +1043,36 @@ const changeVideoSource = async () => {
           frameInterval: state.frameInterval
         });
         startRecognitionLoop();
-        startSnapshotUpdates(); // Start snapshot display updates
+
+        // AUTO-START background processing for RTSP streams
+        try {
+          const bgResponse = await fetch("/api/background/start", {
+            method: "POST"
+          });
+          const bgData = await bgResponse.json();
+
+          if (bgData.success) {
+            console.log("[Remote] Auto-started background processing");
+            startSnapshotUpdates();
+            updateStatus("Background Detection Active", "success");
+            showAlert("✓ RTSP connected - Background detection started automatically", "success");
+          } else {
+            console.warn("[Remote] Failed to auto-start background processing:", bgData.message);
+            showAlert("Source connected - Click RTSP button to start detection", "warning");
+          }
+        } catch (error) {
+          console.error("[Remote] Error auto-starting background processing:", error);
+          showAlert("Source connected - Click RTSP button to start detection", "warning");
+        }
+
         console.log("[Remote] Recognition loop started, timer ID:", state.recognitionTimer);
 
         // Update UI buttons and source display
         if (ui.startCameraBtn) ui.startCameraBtn.classList.add("d-none");
         if (ui.stopCameraBtn) ui.stopCameraBtn.classList.remove("d-none");
         if (ui.sourceDisplay) {
-          const sourceType = source.startsWith('rtsp://') ? 'RTSP' :
-                            source.startsWith('http://') ? 'HTTP' : 'Remote';
+          const sourceType = source.startsWith('rtsp://') ? 'RTSP (Detection)' :
+                            source.startsWith('http://') ? 'HTTP (Detection)' : 'Remote (Detection)';
           ui.sourceDisplay.textContent = sourceType;
         }
       }, 1000);
@@ -1126,10 +1147,13 @@ if (clearEventsBtn) {
   });
 }
 
-// Stop Camera button
+// Stop Camera button - STOPS EVERYTHING (stream + background processing)
 const stopCameraBtn = document.getElementById("stopCameraBtn");
 if (stopCameraBtn) {
-  stopCameraBtn.addEventListener("click", () => {
+  stopCameraBtn.addEventListener("click", async () => {
+    console.log("[Stop Camera] Stopping all processes...");
+
+    // Stop frontend stream
     if (state.stream) {
       state.stream.getTracks().forEach(track => track.stop());
       state.stream = null;
@@ -1140,6 +1164,23 @@ if (stopCameraBtn) {
     }
     ui.video.srcObject = null;
     ui.remoteStream.classList.add("d-none");
+    state.remoteSource = null;
+
+    // Stop snapshot updates
+    stopSnapshotUpdates();
+
+    // STOP BACKEND BACKGROUND PROCESSING
+    try {
+      const response = await fetch("/api/background/stop", {
+        method: "POST"
+      });
+      const data = await response.json();
+      if (data.success) {
+        console.log("[Stop Camera] Background processing stopped");
+      }
+    } catch (error) {
+      console.error("[Stop Camera] Error stopping background:", error);
+    }
 
     // Update UI
     if (ui.startCameraBtn) ui.startCameraBtn.classList.remove("d-none");
@@ -1148,6 +1189,57 @@ if (stopCameraBtn) {
     updateStatus("Camera Stopped", "info");
     showAlert("Camera stopped", "success");
   });
+}
+
+// RTSP Button - Start Background Detection (works for any active source)
+const startRemoteBtn = document.getElementById("startRemoteBtn");
+if (startRemoteBtn) {
+  startRemoteBtn.addEventListener("click", async () => {
+    console.log("[RTSP Button] Starting background detection...");
+
+    // Check if there's an active video source
+    if (!state.stream && !state.remoteSource) {
+      // No source active - open settings panel to configure source first
+      showAlert("Please configure a video source first", "error");
+      // Open settings panel
+      const settingsPanel = document.getElementById("settingsPanel");
+      if (settingsPanel) {
+        const offcanvas = new bootstrap.Offcanvas(settingsPanel);
+        offcanvas.show();
+      }
+      return;
+    }
+
+    try {
+      // Start background processing on backend
+      const response = await fetch("/api/background/start", {
+        method: "POST"
+      });
+      const data = await response.json();
+
+      if (data.success) {
+        console.log("[RTSP Button] Background processing started");
+        showAlert("✓ Background detection started - processing every 0.5s", "success");
+
+        // Start snapshot updates to show results
+        startSnapshotUpdates();
+
+        updateStatus("Background Detection Active", "success");
+
+        // Update source display to indicate detection is active
+        if (ui.sourceDisplay && ui.sourceDisplay.textContent.includes("Preview")) {
+          ui.sourceDisplay.textContent = ui.sourceDisplay.textContent.replace("(Preview)", "(Detection)");
+        }
+      } else {
+        showAlert(data.message || "Failed to start background processing", "error");
+      }
+    } catch (error) {
+      console.error("[RTSP Button] Error:", error);
+      showAlert("Error starting background detection: " + error.message, "error");
+    }
+  });
+} else {
+  console.error("[Init] RTSP button NOT FOUND!");
 }
 
 // Apply & Connect button
@@ -1195,6 +1287,7 @@ const autoReconnectToStream = async () => {
 
       // Set the source in state
       state.remoteSource = data.current_source;
+      const backgroundIsRunning = data.background_running || false;
 
       // Update UI to show we're reconnecting
       updateStatus("Reconnecting...", "info");
@@ -1221,8 +1314,13 @@ const autoReconnectToStream = async () => {
 
         if (onloadCount === 1) {
           startRecognitionLoop();
-          startSnapshotUpdates(); // Start snapshot display updates
-          console.log("[Auto-Reconnect] Recognition loop and snapshot updates started");
+          // Only start snapshot updates if background processing is running
+          if (backgroundIsRunning) {
+            startSnapshotUpdates();
+            console.log("[Auto-Reconnect] Recognition loop and snapshot updates started (background was running)");
+          } else {
+            console.log("[Auto-Reconnect] Recognition loop started (snapshot updates OFF - no background processing)");
+          }
         }
       };
 

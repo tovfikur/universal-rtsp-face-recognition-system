@@ -68,3 +68,6 @@ temp/
 
 # Claude
 .claude/
+
+./backend/faces
+./backend/data

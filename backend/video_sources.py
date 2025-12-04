@@ -291,22 +291,35 @@ class EnhancedVideoStream:
 
                 # Auto-downscale frame if it exceeds maximum resolution
                 if frame is not None:
-                    h, w = frame.shape[:2]
+                    try:
+                        h, w = frame.shape[:2]
 
-                    # Check if downscaling is needed
-                    if w > self.max_width or h > self.max_height:
-                        # Calculate scaling factor to maintain aspect ratio
-                        scale = min(self.max_width / w, self.max_height / h)
-                        new_w = int(w * scale)
-                        new_h = int(h * scale)
+                        # Check if downscaling is needed
+                        if w > self.max_width or h > self.max_height:
+                            # Calculate scaling factor to maintain aspect ratio
+                            scale = min(self.max_width / w, self.max_height / h)
+                            new_w = int(w * scale)
+                            new_h = int(h * scale)
 
-                        # Downscale frame using high-quality interpolation
-                        frame = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
+                            # SAFETY: Ensure dimensions are valid
+                            if new_w > 0 and new_h > 0 and new_w < 10000 and new_h < 10000:
+                                # Downscale frame using high-quality interpolation
+                                frame = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
-                        # Log once when downscaling is first applied
-                        if not self.downscale_applied:
-                            print(f"[VideoStream] Auto-downscaling: {w}x{h} → {new_w}x{new_h} (max: {self.max_width}x{self.max_height})")
-                            self.downscale_applied = True
+                                # Log once when downscaling is first applied
+                                if not self.downscale_applied:
+                                    print(f"[VideoStream] Auto-downscaling: {w}x{h} → {new_w}x{new_h} (max: {self.max_width}x{self.max_height})")
+                                    self.downscale_applied = True
+                            else:
+                                print(f"[VideoStream] Invalid resize dimensions: {new_w}x{new_h}, skipping frame")
+                                consecutive_failures += 1
+                                continue
+
+                    except Exception as e:
+                        print(f"[VideoStream] Error during frame resize: {e}")
+                        consecutive_failures += 1
+                        time.sleep(0.2)
+                        continue
 
                 with self.lock:
                     self.frame = frame
@@ -350,11 +363,18 @@ class EnhancedVideoStream:
         # Attempt reconnection
         self._connect()
 
-    def get_frame(self) -> Optional[np.ndarray]:
-        """Get the latest frame."""
+    def get_frame(self, skip_old: bool = True) -> Optional[np.ndarray]:
+        """
+        Get the latest frame.
+
+        Args:
+            skip_old: Always return current frame (default True).
+                     This ensures no lag - always shows latest frame.
+        """
         with self.lock:
             if self.frame is None:
                 return None
+            # Always return latest frame (no buffering, no lag)
             return self.frame.copy()
 
     def get_info(self) -> SourceInfo:

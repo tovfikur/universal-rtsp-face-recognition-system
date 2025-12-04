@@ -39,7 +39,7 @@ class PersonDetector:
         model_path: str = "yolov8n.pt",  # Use nano model for faster inference
         confidence: float = 0.65,  # Much higher threshold - only very confident person detections
         device: Optional[str] = None,
-        batch_size: int = 8,  # Process more frames at once for better throughput
+        batch_size: int = 4,  # Smaller batches for lower latency
         min_person_area: int = 3000,  # Minimum pixel area for valid person (prevent small false detections)
         max_aspect_ratio: float = 4.0,  # Maximum height/width ratio (prevent weird shaped objects)
     ) -> None:
@@ -52,30 +52,41 @@ class PersonDetector:
         print(f"[PersonDetector] Confidence threshold: {self.confidence}")
         print(f"[PersonDetector] Min person area: {self.min_person_area} pixels")
         print(f"[PersonDetector] Max aspect ratio: {self.max_aspect_ratio}")
-        
+
         # Initialize YOLO with optimized settings
         self.model = YOLO(model_path)
-        
+
         # Force model to GPU and enable optimization
         if "cuda" in self.device:
             # Set PyTorch to use cudnn benchmarking for best performance
             torch.backends.cudnn.benchmark = True
             torch.backends.cudnn.enabled = True
-            
+
             # Move model to GPU
             self.model.to(self.device)
-            
-            print("[PersonDetector] Warming up GPU with batch processing...")
-            # Warm up with batch
-            dummy_batch = [np.zeros((640, 640, 3), dtype=np.uint8) for _ in range(self.batch_size)]
+
+            # Enable TensorFloat-32 for faster matrix operations on Ampere GPUs
+            torch.set_float32_matmul_precision('high')
+
+            print("[PersonDetector] Warming up GPU with optimized inference...")
+            # Warm up with realistic single frame (faster startup)
+            dummy_frame = np.zeros((640, 640, 3), dtype=np.uint8)
             with torch.amp.autocast('cuda'):
-                for _ in range(3):  # Do a few warmup passes
+                for _ in range(2):  # Quick warmup
                     try:
-                        self._detect_batch(dummy_batch)
+                        self.model.predict(
+                            dummy_frame,
+                            classes=[0],
+                            conf=self.confidence,
+                            verbose=False,
+                            device=self.device,
+                            half=True,
+                            imgsz=640
+                        )
                     except Exception as e:
                         print(f"[Warmup warning] {e}")
 
-            print("[PersonDetector] GPU warmup complete")
+            print("[PersonDetector] GPU warmup complete - ready for inference")
             
         # Setup batch processing queue
         self.frame_queue = queue.Queue(maxsize=self.batch_size * 2)
@@ -115,7 +126,9 @@ class PersonDetector:
                 xyxy = result.boxes.xyxy.cpu().numpy()
                 confs = result.boxes.conf.cpu().numpy()
 
-                for bbox, conf in zip(xyxy, confs):
+                print(f"[DEBUG] YOLO returned {len(xyxy)} raw detections")
+
+                for i, (bbox, conf) in enumerate(zip(xyxy, confs)):
                     x1, y1, x2, y2 = [float(v) for v in bbox]
 
                     # Calculate bounding box dimensions
@@ -123,30 +136,39 @@ class PersonDetector:
                     height = y2 - y1
                     area = width * height
 
+                    print(f"[DEBUG] Detection {i}: bbox=({x1:.0f},{y1:.0f},{x2:.0f},{y2:.0f}), conf={conf:.2f}, area={area:.0f}")
+
                     # Filter 1: Minimum area (prevent tiny false detections)
                     if area < self.min_person_area:
+                        print(f"[DEBUG]   -> FILTERED: area {area:.0f} < {self.min_person_area}")
                         continue
 
                     # Filter 2: Aspect ratio (persons are typically taller than wide)
                     aspect_ratio = height / width if width > 0 else 0
                     if aspect_ratio > self.max_aspect_ratio or aspect_ratio < 0.3:
                         # Too tall/thin (like poles) or too wide/flat (like tables)
+                        print(f"[DEBUG]   -> FILTERED: aspect_ratio {aspect_ratio:.2f} not in [0.3, {self.max_aspect_ratio}]")
                         continue
 
                     # Filter 3: Reasonable dimensions (prevent extremely large detections)
                     if width < 20 or height < 40:
                         # Too small to be a person
+                        print(f"[DEBUG]   -> FILTERED: dimensions {width:.0f}x{height:.0f} too small")
                         continue
 
                     if width > 800 or height > 1200:
                         # Unreasonably large (probably false detection)
+                        print(f"[DEBUG]   -> FILTERED: dimensions {width:.0f}x{height:.0f} too large")
                         continue
 
                     # Valid person detection
+                    print(f"[DEBUG]   -> ACCEPTED")
                     detections.append({
                         "bbox": [x1, y1, x2, y2],
                         "confidence": float(conf),
                     })
+            else:
+                print("[DEBUG] YOLO returned NO boxes")
             batch_detections.append(detections)
 
         return batch_detections
@@ -206,29 +228,99 @@ class PersonDetector:
         except queue.Empty:
             return []
 
-    def detect_immediate(self, frame: np.ndarray) -> List[Dict[str, float]]:
-        """Direct detection without batching for low-latency needs."""
-        DEBUG = True
-        
+    def detect_immediate(self, frame: np.ndarray, debug: bool = False) -> List[Dict[str, float]]:
+        """
+        OPTIMIZED: Direct detection without batching for lowest latency.
+        Uses single-frame inference for immediate results.
+        """
         if frame is None:
-            if DEBUG:
+            if debug:
                 print("[DEBUG] Detector: Empty frame received")
             return []
-        
-        if DEBUG:
+
+        if debug:
             print(f"[DEBUG] Detector: Processing frame with shape {frame.shape}")
-            
-        # Expand to batch dimension
-        batch = np.expand_dims(frame, axis=0)
-        results = self._detect_batch(batch)
-        
-        detections = results[0] if results else []
-        if DEBUG:
-            print(f"[DEBUG] Detector: Found {len(detections)} people")
-            for i, det in enumerate(detections):
-                print(f"[DEBUG] Person {i}: confidence={det['confidence']:.2f}, bbox={det['bbox']}")
-                
-        return detections
+
+        # Direct single-frame inference (no batching overhead)
+        try:
+            with torch.amp.autocast('cuda') if "cuda" in self.device else torch.no_grad():
+                result = self.model.predict(
+                    source=frame,
+                    classes=[0],  # person class only
+                    conf=self.confidence,
+                    verbose=False,
+                    device=self.device,
+                    max_det=50,
+                    imgsz=640,
+                    half=True if "cuda" in self.device else False,
+                    stream=False,  # Single frame, no streaming
+                )[0]  # Get first result
+
+            detections = []
+            if result.boxes is not None:
+                xyxy = result.boxes.xyxy.cpu().numpy()
+                confs = result.boxes.conf.cpu().numpy()
+
+                if debug:
+                    print(f"[DEBUG] YOLO returned {len(xyxy)} raw detections")
+
+                for i, (bbox, conf) in enumerate(zip(xyxy, confs)):
+                    x1, y1, x2, y2 = [float(v) for v in bbox]
+
+                    # Calculate bounding box dimensions
+                    width = x2 - x1
+                    height = y2 - y1
+                    area = width * height
+
+                    if debug:
+                        print(f"[DEBUG] Detection {i}: bbox=({x1:.0f},{y1:.0f},{x2:.0f},{y2:.0f}), conf={conf:.2f}, area={area:.0f}")
+
+                    # Filter 1: Minimum area (prevent tiny false detections)
+                    if area < self.min_person_area:
+                        if debug:
+                            print(f"[DEBUG]   -> FILTERED: area {area:.0f} < {self.min_person_area}")
+                        continue
+
+                    # Filter 2: Aspect ratio (persons are typically taller than wide)
+                    aspect_ratio = height / width if width > 0 else 0
+                    if aspect_ratio > self.max_aspect_ratio or aspect_ratio < 0.3:
+                        if debug:
+                            print(f"[DEBUG]   -> FILTERED: aspect_ratio {aspect_ratio:.2f} not in [0.3, {self.max_aspect_ratio}]")
+                        continue
+
+                    # Filter 3: Reasonable dimensions
+                    if width < 20 or height < 40:
+                        if debug:
+                            print(f"[DEBUG]   -> FILTERED: dimensions {width:.0f}x{height:.0f} too small")
+                        continue
+
+                    if width > 800 or height > 1200:
+                        if debug:
+                            print(f"[DEBUG]   -> FILTERED: dimensions {width:.0f}x{height:.0f} too large")
+                        continue
+
+                    # Valid person detection
+                    if debug:
+                        print(f"[DEBUG]   -> ACCEPTED")
+
+                    detections.append({
+                        "bbox": [x1, y1, x2, y2],
+                        "confidence": float(conf),
+                    })
+            else:
+                if debug:
+                    print("[DEBUG] YOLO returned NO boxes")
+
+            if debug:
+                print(f"[DEBUG] Detector: Found {len(detections)} valid people")
+
+            return detections
+
+        except Exception as e:
+            print(f"[ERROR] Detection failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
 
     def stop(self):
         """Stop the batch processing thread."""
