@@ -135,13 +135,13 @@ class EnhancedVideoStream:
             if self.source_info.source_type == SourceType.RTSP:
                 print("[VideoStream] Using FFmpeg backend for RTSP")
 
-                # Build RTSP URL with FFmpeg options embedded
+                # Build RTSP URL with FFmpeg options embedded (optimized for low latency)
                 rtsp_options = (
-                    "rtsp_transport;tcp|"  # Force TCP transport
+                    "rtsp_transport;tcp|"  # Force TCP transport for stability
                     "rtsp_flags;prefer_tcp|"  # Prefer TCP over UDP
-                    "buffer_size;1024000|"  # 1MB buffer
-                    "max_delay;500000|"  # 500ms max delay
-                    "stimeout;5000000"  # 5 second socket timeout
+                    "buffer_size;512000|"  # 512KB buffer (smaller for lower latency)
+                    "max_delay;100000|"  # 100ms max delay (reduced for real-time)
+                    "stimeout;10000000"  # 10 second socket timeout (increased for stability)
                 )
 
                 # Set FFmpeg options via environment variable method
@@ -159,13 +159,13 @@ class EnhancedVideoStream:
             # Configure capture based on source type
             if self.source_info.source_type == SourceType.RTSP:
                 # RTSP optimizations for low latency
-                self.capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Minimal buffer
+                self.capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Minimal buffer for real-time
 
-                # Aggressive timeout settings
-                self.capture.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 3000)  # 3 second open timeout
-                self.capture.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 3000)  # 3 second read timeout
+                # Optimized timeout settings (balanced stability and responsiveness)
+                self.capture.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)  # 5 second open timeout
+                self.capture.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)  # 5 second read timeout
 
-                print("[VideoStream] RTSP settings applied: TCP mode, 3s timeouts, buffer=1")
+                print("[VideoStream] RTSP settings applied: TCP mode, 5s timeouts, buffer=1")
 
             elif self.source_info.source_type == SourceType.WEBCAM:
                 # Webcam optimizations
@@ -212,9 +212,9 @@ class EnhancedVideoStream:
             return False
 
     def _reader(self) -> None:
-        """Background thread to read frames."""
+        """Background thread to read frames - RESILIENT to timeouts."""
         consecutive_failures = 0
-        max_failures = 30  # Reconnect after 30 consecutive failures
+        max_failures = 100  # Increased to 100 for better resilience (was 30)
         is_rtsp = self.source_info.source_type == SourceType.RTSP
         frame_count = 0
 
@@ -238,7 +238,7 @@ class EnhancedVideoStream:
 
                 # Read frame with timeout protection using threading
                 if is_rtsp:
-                    # Use timeout for RTSP frame read
+                    # Use timeout for RTSP frame read (increased to 5s for stability)
                     result = [None, None]
 
                     def read_frame():
@@ -250,12 +250,14 @@ class EnhancedVideoStream:
 
                     read_thread = threading.Thread(target=read_frame, daemon=True)
                     read_thread.start()
-                    read_thread.join(timeout=3.0)  # 3 second timeout
+                    read_thread.join(timeout=5.0)  # Increased to 5 second timeout for stability
 
                     if read_thread.is_alive():
-                        print("[VideoStream] Frame read timeout, skipping...")
+                        # Don't print timeout message too frequently (only every 10 timeouts)
                         consecutive_failures += 1
-                        time.sleep(0.5)
+                        if consecutive_failures % 10 == 1:
+                            print("[VideoStream] Frame read timeout, skipping...")
+                        time.sleep(0.2)  # Shorter delay for faster recovery
                         continue
 
                     success, frame = result[0], result[1]
@@ -325,16 +327,17 @@ class EnhancedVideoStream:
                     self.frame = frame
                     self.last_frame_time = time.time()
 
-                # Adaptive delay based on source type
-                if is_rtsp:
-                    time.sleep(0.01)  # 10ms delay for RTSP
-                else:
-                    time.sleep(0.01)  # Standard delay
+                # Minimal delay for maximum throughput
+                time.sleep(0.001)  # 1ms delay for smooth frame reading
 
             except Exception as e:
                 print(f"[VideoStream] Error reading frame: {e}")
                 consecutive_failures += 1
                 time.sleep(0.2)
+                # Don't let exceptions crash the thread
+                continue
+
+        print("[VideoStream] Reader thread exiting gracefully")
 
     def _reconnect(self) -> None:
         """Attempt to reconnect to source."""
@@ -365,7 +368,7 @@ class EnhancedVideoStream:
 
     def get_frame(self, skip_old: bool = True) -> Optional[np.ndarray]:
         """
-        Get the latest frame.
+        Get the latest frame with comprehensive validation.
 
         Args:
             skip_old: Always return current frame (default True).
@@ -374,8 +377,47 @@ class EnhancedVideoStream:
         with self.lock:
             if self.frame is None:
                 return None
-            # Always return latest frame (no buffering, no lag)
-            return self.frame.copy()
+
+            # VALIDATION: Comprehensive frame integrity checks
+            try:
+                # Check if frame is valid array
+                if not isinstance(self.frame, np.ndarray):
+                    print("[VideoStream] WARNING: Frame is not ndarray, skipping")
+                    return None
+
+                # Check frame is not empty
+                if self.frame.size == 0:
+                    print("[VideoStream] WARNING: Frame is empty (size=0), skipping")
+                    return None
+
+                # Check frame has valid dimensions
+                if len(self.frame.shape) < 2:
+                    print(f"[VideoStream] WARNING: Frame has invalid shape {self.frame.shape}, skipping")
+                    return None
+
+                h, w = self.frame.shape[:2]
+
+                # Check minimum dimensions (must be at least 10x10)
+                if h < 10 or w < 10:
+                    print(f"[VideoStream] WARNING: Frame dimensions {w}x{h} too small, skipping")
+                    return None
+
+                # Check maximum dimensions (prevent memory issues)
+                if h > 10000 or w > 10000:
+                    print(f"[VideoStream] WARNING: Frame dimensions {w}x{h} too large, skipping")
+                    return None
+
+                # Check if frame is corrupted (all zeros or all same value)
+                if self.frame.min() == self.frame.max():
+                    print("[VideoStream] WARNING: Frame appears corrupted (uniform values), skipping")
+                    return None
+
+                # All validations passed - return copy
+                return self.frame.copy()
+
+            except Exception as e:
+                print(f"[VideoStream] ERROR during frame validation: {e}")
+                return None
 
     def get_info(self) -> SourceInfo:
         """Get source information."""

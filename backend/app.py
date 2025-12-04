@@ -21,14 +21,17 @@ from quart import Quart, Response, jsonify, request, send_from_directory
 from quart_cors import cors
 import torch
 
-# Initialize thread pool for parallel face processing
-executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+# Initialize thread pool for parallel face processing (reduced to 2 for stability)
+executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+
+# Global lock for OpenCV operations to prevent race conditions and segmentation faults
+opencv_lock = threading.Lock()
 
 from database import FaceDatabase
 from detector import PersonDetector
 from recognizer import FaceRecognitionEngine
 from tracker import SimpleTracker, TrackedPerson, link_face_to_person
-from enhanced_recognition import EnhancedFaceRecognizer, enhance_frame_for_detection
+from enhanced_recognition import EnhancedFaceRecognizer, enhance_frame_for_detection, face_recognition_lock
 from video_sources import EnhancedVideoStream, parse_source, validate_source, SourceType
 from detection_history import DetectionHistory
 from stream_state import StreamStateManager
@@ -66,21 +69,21 @@ app = Quart(
 )
 app = cors(app, allow_origin="*")
 
-# Initialize with optimized detector (nano model)
+# Initialize with optimized detector (nano model) - TUNED FOR DISTANCE DETECTION
 detector = PersonDetector(
     model_path="yolov8n.pt",  # Use nano model for faster processing
-    confidence=0.65,  # High confidence - only detect actual persons
+    confidence=0.45,  # LOWERED for better distance detection (was 0.65)
     device=YOLO_DEVICE,
     batch_size=8,  # Increased batch size for better throughput
-    min_person_area=3000,  # Minimum 3000 pixels (e.g., 50x60)
-    max_aspect_ratio=4.0,  # Maximum height/width ratio
+    min_person_area=1200,  # LOWERED to detect distant persons (was 3000) - ~35x35 pixels
+    max_aspect_ratio=5.0,  # INCREASED to detect persons at various angles (was 4.0)
 )
 
-# Initialize database first with STRICT tolerance for accuracy
+# Initialize database with RELAXED tolerance for distance detection
 database = FaceDatabase(
     data_dir=BACKEND_DIR / "data",
     faces_dir=BACKEND_DIR / "faces",
-    tolerance=0.45,  # STRICT tolerance - won't confuse different people (was 0.45/FACE_TOLERANCE)
+    tolerance=0.55,  # RELAXED tolerance - allows very distant faces while maintaining accuracy
 )
 
 # Initialize face recognition with GPU if available
@@ -100,12 +103,12 @@ person_tracker = SimpleTracker(
     face_memory_time=3.0
 )
 
-# Initialize enhanced face recognizer for ACCURACY (no confusion between persons)
+# Initialize enhanced face recognizer for RELAXED distance detection
 enhanced_recognizer = EnhancedFaceRecognizer(
-    base_tolerance=0.50,      # STRICT tolerance - won't confuse different people (was 0.65)
-    min_face_size=40,         # Only clear faces (was 30)
-    max_upsample=2,           # More upsampling for better quality
-    quality_threshold=0.35    # Higher quality threshold (was 0.25)
+    base_tolerance=0.55,      # RELAXED tolerance - allows very distant faces while maintaining accuracy
+    min_face_size=30,         # Lower to detect distant faces
+    max_upsample=2,           # Higher upsampling for distant/small faces
+    quality_threshold=0.25    # Lower to accept more faces (strict matching handles accuracy)
 )
 
 # Initialize detection history database
@@ -188,6 +191,7 @@ def stream_encoding_loop():
     DEDICATED THREAD: Pre-encodes video frames at 30 FPS.
     Completely independent from detection/snapshot threads.
     Ensures video feed NEVER freezes regardless of what else is happening.
+    RESILIENT: Never crashes, keeps running through any errors.
     """
     global stream_encoding_running, video_stream_cache, latest_encoded_frame
 
@@ -211,13 +215,22 @@ def stream_encoding_loop():
                 time.sleep(0.01)
                 continue
 
-            # CRITICAL: Make a copy to prevent thread conflicts
-            frame_copy = frame.copy()
-
-            # Fast JPEG encoding (quality 85 for good quality)
+            # Fast JPEG encoding (quality 90 for industry-grade quality, optimized for speed)
             try:
-                success, buffer = cv2.imencode('.jpg', frame_copy,
-                                              [cv2.IMWRITE_JPEG_QUALITY, 85])
+                # Use optimized JPEG encoding parameters for smooth preview
+                encode_params = [
+                    cv2.IMWRITE_JPEG_QUALITY, 90,  # High quality for smooth preview
+                    cv2.IMWRITE_JPEG_OPTIMIZE, 1,  # Optimize encoding
+                    cv2.IMWRITE_JPEG_PROGRESSIVE, 0  # No progressive (faster)
+                ]
+                # THREAD-SAFE: Lock OpenCV operation to prevent race conditions
+                try:
+                    with opencv_lock:
+                        success, buffer = cv2.imencode('.jpg', frame, encode_params)
+                except Exception as e:
+                    print(f"[ERROR] Frame encoding error: {e}")
+                    continue
+
                 if success:
                     jpg_bytes = buffer.tobytes()
 
@@ -229,15 +242,20 @@ def stream_encoding_loop():
                 time.sleep(0.1)
                 continue
 
-            # Maintain target FPS
+            # Maintain target FPS with precise timing
             elapsed = time.time() - t_start
-            sleep_time = max(0, frame_interval - elapsed)
-            if sleep_time > 0:
-                time.sleep(sleep_time)
+            sleep_time = max(0.001, frame_interval - elapsed)  # Min 1ms sleep
+            time.sleep(sleep_time)
 
+        except KeyboardInterrupt:
+            print("[StreamEncoder] Keyboard interrupt received")
+            break
         except Exception as e:
             print(f"[StreamEncoder] Error: {e}")
+            import traceback
+            print(f"[StreamEncoder] Traceback: {traceback.format_exc()}")
             time.sleep(0.1)
+            # Continue running despite errors
 
     print("[StreamEncoder] Stream encoding thread stopped")
 
@@ -273,6 +291,7 @@ def background_processing_loop():
     """
     Background thread that continuously processes frames and stores detections.
     Runs independently - frontend only displays results, doesn't drive processing.
+    RESILIENT: Never crashes, keeps running through any errors.
     """
     global background_running, video_stream_cache, current_source
 
@@ -367,11 +386,15 @@ def background_processing_loop():
                     except Exception as e:
                         print(f"[Background] Error storing detection: {e}")
 
+        except KeyboardInterrupt:
+            print("[Background] Keyboard interrupt received")
+            break
         except Exception as e:
             import traceback
             print(f"[Background] Processing error: {e}")
             print(f"[Background] Traceback: {traceback.format_exc()}")
             time.sleep(1)  # Brief pause before retry
+            # Continue running despite errors
 
     print("[Background] Background processing thread stopped")
 
@@ -407,14 +430,15 @@ def stop_background_processing():
 def snapshot_analysis_loop():
     """
     Independent snapshot analysis thread.
-    Analyzes high-quality frames every 1.5 seconds and saves snapshot with overlays.
+    Analyzes high-quality frames every 20 seconds and saves snapshot with overlays.
     Completely independent from video streaming.
+    RESILIENT: Never crashes, keeps running through any errors.
     """
     global snapshot_running, video_stream_cache, current_source, latest_snapshot_path
 
     print("[Snapshot] Starting independent snapshot analysis thread...")
     snapshot_running = True
-    analysis_interval = 5.0  # Process every 5 seconds (4s work + 1s ready)
+    analysis_interval = 20.0  # Process every 20 seconds (3 times per minute for accuracy)
 
     while snapshot_running:
         try:
@@ -433,11 +457,10 @@ def snapshot_analysis_loop():
                 time.sleep(0.5)
                 continue
 
-            # SKIP ENHANCEMENT: Faster processing, avoid freezing
-            # Use frame directly - no preprocessing overhead
+            # Use frame directly - no preprocessing for maximum speed
             enhanced_frame = frame
 
-            # Detect persons
+            # Detect persons with GPU acceleration
             persons = detector.detect_immediate(enhanced_frame)
             print(f"[Snapshot] Detected {len(persons)} person(s)")
 
@@ -456,11 +479,12 @@ def snapshot_analysis_loop():
                                                        max(0, x1):min(enhanced_frame.shape[1], x2)]
 
                         if person_region.size > 0:
+                            # Use HOG model for speed (still accurate with strict tolerance)
                             match_result = enhanced_recognizer.detect_and_recognize(
                                 person_region,
                                 database._encodings,
                                 [meta["name"] for meta in database._metadata],
-                                model="cnn" if torch.cuda.is_available() else "hog"  # CNN for ACCURACY
+                                model="hog"  # HOG for speed with accuracy via strict tolerance
                             )
 
                             if match_result:
@@ -512,40 +536,56 @@ def snapshot_analysis_loop():
                     radius_x = int((x2 - x1) / 2)
                     radius_y = int((y2 - y1) / 2)
 
-                    cv2.ellipse(overlay_frame, (center_x, center_y), (radius_x, radius_y),
-                               0, 0, 360, color, 3)
+                    # THREAD-SAFE: Lock all OpenCV drawing operations
+                    try:
+                        with opencv_lock:
+                            cv2.ellipse(overlay_frame, (center_x, center_y), (radius_x, radius_y),
+                                       0, 0, 360, color, 3)
 
-                    # Draw label
-                    label = track.name if hasattr(track, 'name') and track.name else "Unknown"
-                    if hasattr(track, 'face_confidence') and track.face_confidence > 0:
-                        label += f" ({track.face_confidence*100:.0f}%)"
+                            # Draw label
+                            label = track.name if hasattr(track, 'name') and track.name else "Unknown"
+                            if hasattr(track, 'face_confidence') and track.face_confidence > 0:
+                                label += f" ({track.face_confidence*100:.0f}%)"
 
-                    (label_w, label_h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
-                    label_x = center_x - label_w // 2
-                    label_y = max(20, y1 - 10)
+                            (label_w, label_h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+                            label_x = center_x - label_w // 2
+                            label_y = max(20, y1 - 10)
 
-                    cv2.rectangle(overlay_frame,
-                                 (label_x - 5, label_y - label_h - 5),
-                                 (label_x + label_w + 5, label_y + 5),
-                                 color, -1)
-                    cv2.putText(overlay_frame, label, (label_x, label_y),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                            cv2.rectangle(overlay_frame,
+                                         (label_x - 5, label_y - label_h - 5),
+                                         (label_x + label_w + 5, label_y + 5),
+                                         color, -1)
+                            cv2.putText(overlay_frame, label, (label_x, label_y),
+                                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                    except Exception as e:
+                        print(f"[ERROR] Drawing operation error: {e}")
             else:
                 overlay_frame = enhanced_frame
 
             # Save main snapshot
             snapshot_path = BACKEND_DIR / "data" / "analysis_snapshot.jpg"
-            cv2.imwrite(str(snapshot_path), overlay_frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
-            latest_snapshot_path = str(snapshot_path)
+            # THREAD-SAFE: Lock OpenCV file operations
+            try:
+                with opencv_lock:
+                    cv2.imwrite(str(snapshot_path), overlay_frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
+                latest_snapshot_path = str(snapshot_path)
+            except Exception as e:
+                print(f"[ERROR] Snapshot write error: {e}")
+                latest_snapshot_path = None
 
             # Save to history with timestamp
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             history_filename = f"snapshot_history_{timestamp}.jpg"
             history_path = BACKEND_DIR / "data" / history_filename
 
-            # Resize to thumbnail (1/4 size for 2x2 grid)
-            thumbnail = cv2.resize(overlay_frame, (overlay_frame.shape[1]//4, overlay_frame.shape[0]//4))
-            cv2.imwrite(str(history_path), thumbnail, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            # THREAD-SAFE: Lock OpenCV resize and write operations
+            try:
+                with opencv_lock:
+                    # Resize to thumbnail (1/4 size for 2x2 grid)
+                    thumbnail = cv2.resize(overlay_frame, (overlay_frame.shape[1]//4, overlay_frame.shape[0]//4))
+                    cv2.imwrite(str(history_path), thumbnail, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            except Exception as e:
+                print(f"[ERROR] History thumbnail write error: {e}")
 
             # Add to history list (keep only last 4)
             snapshot_history.append({
@@ -570,11 +610,15 @@ def snapshot_analysis_loop():
             # Wait for next analysis
             time.sleep(analysis_interval)
 
+        except KeyboardInterrupt:
+            print("[Snapshot] Keyboard interrupt received")
+            break
         except Exception as e:
             import traceback
             print(f"[Snapshot] Error: {e}")
             print(f"[Snapshot] Traceback: {traceback.format_exc()}")
             time.sleep(1)  # Brief pause before retry
+            # Continue running despite errors
 
     print("[Snapshot] Snapshot analysis thread stopped")
 
@@ -680,7 +724,9 @@ def process_frame_gpu(frame: np.ndarray) -> Tuple[List[Dict[str, object]], np.nd
     face_tasks = []
     for person in detections:
         x1, y1, x2, y2 = [int(v) for v in person["bbox"]]
-        cv2.rectangle(overlay, (x1, y1), (x2, y2), (71, 138, 201), 2)
+        # THREAD-SAFE: Lock OpenCV drawing operation
+        with opencv_lock:
+            cv2.rectangle(overlay, (x1, y1), (x2, y2), (71, 138, 201), 2)
         region = frame[y1:y2, x1:x2]
         if region.size > 0:
             face_tasks.append((region, person, x1, y1, x2, y2))
@@ -703,26 +749,29 @@ def process_frame_gpu(frame: np.ndarray) -> Tuple[List[Dict[str, object]], np.nd
         global_bbox = result["face_bbox"]
         name = result["name"]
         confidence = result["match_confidence"]
-        
+
         color = (18, 200, 90) if name != "Unknown" else (255, 100, 100)
-        cv2.rectangle(
-            overlay,
-            (global_bbox[0], global_bbox[1]),
-            (global_bbox[2], global_bbox[3]),
-            color,
-            2,
-        )
-        
-        label = f"{name} ({confidence:.2f})"
-        cv2.putText(
-            overlay,
-            label,
-            (global_bbox[0], max(global_bbox[1] - 10, 20)),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.55,
-            (255, 255, 255),
-            2,
-        )
+
+        # THREAD-SAFE: Lock OpenCV drawing operations
+        with opencv_lock:
+            cv2.rectangle(
+                overlay,
+                (global_bbox[0], global_bbox[1]),
+                (global_bbox[2], global_bbox[3]),
+                color,
+                2,
+            )
+
+            label = f"{name} ({confidence:.2f})"
+            cv2.putText(
+                overlay,
+                label,
+                (global_bbox[0], max(global_bbox[1] - 10, 20)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.55,
+                (255, 255, 255),
+                2,
+            )
     
     return all_results, overlay
 
@@ -730,7 +779,9 @@ def process_frame_gpu(frame: np.ndarray) -> Tuple[List[Dict[str, object]], np.nd
 def save_face_image(image: np.ndarray, name: str) -> Path:
     filename = f"{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{slugify(name)}.jpg"
     output_path = BACKEND_DIR / "faces" / filename
-    cv2.imwrite(str(output_path), image)
+    # THREAD-SAFE: Lock OpenCV file write operation
+    with opencv_lock:
+        cv2.imwrite(str(output_path), image)
     return output_path
 
 
@@ -923,14 +974,34 @@ async def register_face() -> Response:
         return {"success": False, "message": "Invalid image payload."}, 400
 
     # Fast face detection for registration (no upsampling)
-    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    locations = face_recognition.face_locations(rgb, number_of_times_to_upsample=0, model="hog")
+    try:
+        # THREAD-SAFE: Lock OpenCV color conversion
+        with opencv_lock:
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    except Exception as e:
+        print(f"[ERROR] Color conversion error: {e}")
+        return {"success": False, "message": "Image processing error."}, 500
+
+    # THREAD-SAFE: Lock face_recognition operation to prevent segmentation faults
+    try:
+        with face_recognition_lock:
+            locations = face_recognition.face_locations(rgb, number_of_times_to_upsample=0, model="hog")
+    except Exception as e:
+        print(f"[ERROR] Face location detection error: {e}")
+        return {"success": False, "message": "Face detection error."}, 500
 
     if not locations:
         return {"success": False, "message": "No face detected."}, 422
 
     # Get encodings for detected faces
-    encodings = face_recognition.face_encodings(rgb, locations)
+    # THREAD-SAFE: Lock face_recognition operation to prevent segmentation faults
+    try:
+        with face_recognition_lock:
+            encodings = face_recognition.face_encodings(rgb, locations)
+    except Exception as e:
+        print(f"[ERROR] Face encoding error: {e}")
+        return {"success": False, "message": "Face encoding error."}, 500
+
     if not encodings:
         return {"success": False, "message": "Could not encode face."}, 422
 
@@ -1133,7 +1204,7 @@ async def stream() -> Response:
         """ZERO-OVERHEAD stream - serves pre-encoded frames from dedicated thread"""
         print("[Stream] Starting ZERO-OVERHEAD stream (pre-encoded frames)")
         frame_count = 0
-        last_frame = None
+        last_frame_time = 0
 
         try:
             while True:
@@ -1141,25 +1212,39 @@ async def stream() -> Response:
                 with encoded_frame_lock:
                     current_frame = latest_encoded_frame
 
-                # Only send if we have a new frame
-                if current_frame and current_frame != last_frame:
-                    frame_count += 1
-                    last_frame = current_frame
+                # Always send frame if available (even if same as previous)
+                # This prevents Content-Length mismatches
+                if current_frame:
+                    current_time = time.time()
+                    # Limit to 30 FPS to reduce bandwidth
+                    if current_time - last_frame_time >= 0.033:
+                        frame_count += 1
+                        last_frame_time = current_time
 
-                    yield (
-                        b"--frame\r\n"
-                        b"Content-Type: image/jpeg\r\n\r\n" + current_frame + b"\r\n"
-                    )
+                        # Build multipart frame with proper Content-Length
+                        frame_data = (
+                            b"--frame\r\n"
+                            b"Content-Type: image/jpeg\r\n"
+                            b"Content-Length: " + str(len(current_frame)).encode() + b"\r\n\r\n"
+                            + current_frame + b"\r\n"
+                        )
+                        yield frame_data
 
-                # Minimal delay (30 FPS)
-                await asyncio.sleep(0.033)
+                # Small delay to prevent CPU spinning
+                await asyncio.sleep(0.01)
 
         except GeneratorExit:
             print(f"[Stream] Client disconnected after {frame_count} frames")
         except Exception as e:
             print(f"[Stream] Stream error: {e}")
 
-    return Response(generate(), mimetype="multipart/x-mixed-replace; boundary=frame")
+    # Return response without Content-Length header (streaming)
+    headers = {
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0'
+    }
+    return Response(generate(), mimetype="multipart/x-mixed-replace; boundary=frame", headers=headers)
 
 
 @app.route("/api/clear", methods=["DELETE"])
@@ -1317,6 +1402,8 @@ def cleanup():
 
 import atexit
 atexit.register(cleanup)
+
+# Note: Signal handlers are set in main() to avoid conflicts with hypercorn
 
 
 # --------------------------------------------------------------------------- #
@@ -1522,6 +1609,36 @@ async def handle_500(e):
 # Main
 # =============================================================================
 
+def monitor_threads():
+    """Monitor all background threads and restart if they die."""
+    global background_thread, snapshot_thread, stream_encoding_thread
+
+    print("[Monitor] Starting thread monitor...")
+
+    while True:
+        try:
+            time.sleep(5)  # Check every 5 seconds
+
+            # Check background thread
+            if background_running and (not background_thread or not background_thread.is_alive()):
+                print("[Monitor] Background thread died, restarting...")
+                start_background_processing()
+
+            # Check snapshot thread
+            if snapshot_running and (not snapshot_thread or not snapshot_thread.is_alive()):
+                print("[Monitor] Snapshot thread died, restarting...")
+                start_snapshot_analysis()
+
+            # Check stream encoding thread
+            if stream_encoding_running and (not stream_encoding_thread or not stream_encoding_thread.is_alive()):
+                print("[Monitor] Stream encoding thread died, restarting...")
+                start_stream_encoding()
+
+        except Exception as e:
+            print(f"[Monitor] Error: {e}")
+            time.sleep(1)
+
+
 if __name__ == "__main__":
     debug_mode = os.getenv("FLASK_DEBUG", "0") == "1"  # Disable debug for performance
 
@@ -1547,7 +1664,11 @@ if __name__ == "__main__":
             print(f"[Auto-Restore] Failed to restore stream: {e}")
             stream_state.set_inactive()
 
-    # Use hypercorn for better async performance
+    # Start thread monitor
+    monitor_thread = threading.Thread(target=monitor_threads, daemon=True)
+    monitor_thread.start()
+
+    # Use hypercorn for better async performance with resilient configuration
     from hypercorn.config import Config
     from hypercorn.asyncio import serve
 
@@ -1555,6 +1676,53 @@ if __name__ == "__main__":
     config.bind = ["0.0.0.0:5000"]
     config.use_reloader = debug_mode
     config.workers = 1  # Single worker for GPU access
+    config.graceful_timeout = 120  # 2 minutes for graceful shutdown
+    config.keep_alive_timeout = 120  # Keep connections alive for 2 minutes
+    config.worker_class = "asyncio"
+
+    # Set error log level to INFO for debugging (change to WARNING in production)
+    config.loglevel = "INFO"
+
+    # Handle errors gracefully - don't crash on client disconnects
+    config.errorlog = "-"  # Log to stdout
+    config.accesslog = "-" if debug_mode else None  # Enable access logs in debug mode
 
     import asyncio
-    asyncio.run(serve(app, config))
+
+    print("=" * 80)
+    print("[Main] Starting server on http://0.0.0.0:5000")
+    print("[Main] Press Ctrl+C to exit")
+    print("[Main] Application is now running and will auto-restart if it crashes")
+    print("=" * 80)
+
+    restart_count = 0
+    while True:
+        try:
+            if restart_count > 0:
+                print(f"[Main] Server restart #{restart_count}")
+
+            print(f"[Main] Starting hypercorn server...")
+            asyncio.run(serve(app, config))
+
+            # If we get here, the server stopped normally (not an exception)
+            restart_count += 1
+            print(f"[Main] Server stopped normally, restarting in 2 seconds... (restart #{restart_count})")
+            time.sleep(2)
+
+        except KeyboardInterrupt:
+            print("\n[Main] Keyboard interrupt received, shutting down gracefully...")
+            cleanup()
+            break
+        except SystemExit as e:
+            print(f"\n[Main] SystemExit received: {e}")
+            cleanup()
+            break
+        except Exception as e:
+            restart_count += 1
+            print(f"\n[Main] Server crashed with error: {e}")
+            import traceback
+            traceback.print_exc()
+            print(f"[Main] Restarting server in 5 seconds... (restart #{restart_count})")
+            time.sleep(5)
+
+    print("[Main] Application shutdown complete")

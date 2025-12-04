@@ -13,6 +13,9 @@ from typing import Dict, List, Optional, Tuple
 import face_recognition
 import numpy as np
 
+# Import face_recognition lock for thread-safety
+from enhanced_recognition import face_recognition_lock
+
 
 class FaceDatabase:
     """Simple filesystem-backed face database."""
@@ -120,10 +123,18 @@ class FaceDatabase:
             if not self._encodings:
                 return None
 
-            known_encodings = np.vstack(self._encodings)
-            distances = face_recognition.face_distance(known_encodings, encoding)
-            best_idx = int(np.argmin(distances))
-            distance = float(distances[best_idx])
+            try:
+                known_encodings = np.vstack(self._encodings)
+
+                # THREAD-SAFE: Lock face_recognition operation to prevent segmentation faults
+                with face_recognition_lock:
+                    distances = face_recognition.face_distance(known_encodings, encoding)
+
+                best_idx = int(np.argmin(distances))
+                distance = float(distances[best_idx])
+            except Exception as e:
+                print(f"[ERROR] Face matching error: {e}")
+                return None
             
             # Add debug logging for matching
             print(f"[DEBUG] Face matching:")

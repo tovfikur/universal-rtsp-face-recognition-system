@@ -255,7 +255,13 @@ class PersonDetector:
                     half=True if "cuda" in self.device else False,
                     stream=False,  # Single frame, no streaming
                 )[0]  # Get first result
+        except Exception as e:
+            print(f"[ERROR] YOLO prediction error: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
 
+        try:
             detections = []
             if result.boxes is not None:
                 xyxy = result.boxes.xyxy.cpu().numpy()

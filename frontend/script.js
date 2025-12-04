@@ -28,7 +28,7 @@ const ui = {
 console.log("[Init] UI elements loaded:", {
   video: !!ui.video,
   canvas: !!ui.canvas,
-  cameraSourceInput: !!ui.cameraSourceInput
+  cameraSourceInput: !!ui.cameraSourceInput,
 });
 
 const FACE_PLACEHOLDER =
@@ -89,7 +89,11 @@ const performanceMonitor = {
       this.frameCount = 0;
       this.lastTime = now;
       // Update FPS display if needed (with null check)
-      if (ui.statusBadge && ui.statusBadge.textContent && ui.statusBadge.textContent.includes("Streaming")) {
+      if (
+        ui.statusBadge &&
+        ui.statusBadge.textContent &&
+        ui.statusBadge.textContent.includes("Streaming")
+      ) {
         updateStatus(`Streaming (${this.fps} FPS)`, "success");
       }
     }
@@ -114,21 +118,21 @@ const showAlert = (message, type = "success", timeout = 4000) => {
 const updateStatus = (text, tone = "info") => {
   // Update system status indicator
   if (ui.systemStatus) {
-    const statusDot = ui.systemStatus.querySelector('.status-dot');
-    const statusText = ui.systemStatus.querySelector('.status-text');
+    const statusDot = ui.systemStatus.querySelector(".status-dot");
+    const statusText = ui.systemStatus.querySelector(".status-text");
 
     if (statusDot && statusText) {
-      statusDot.classList.remove('offline', 'online', 'streaming');
+      statusDot.classList.remove("offline", "online", "streaming");
 
-      if (tone === 'success' || text.includes('Streaming')) {
-        statusDot.classList.add('streaming');
-        statusText.textContent = 'System Active';
-      } else if (tone === 'danger' || text.includes('Offline')) {
-        statusDot.classList.add('offline');
-        statusText.textContent = 'System Offline';
+      if (tone === "success" || text.includes("Streaming")) {
+        statusDot.classList.add("streaming");
+        statusText.textContent = "System Active";
+      } else if (tone === "danger" || text.includes("Offline")) {
+        statusDot.classList.add("offline");
+        statusText.textContent = "System Offline";
       } else {
-        statusDot.classList.add('online');
-        statusText.textContent = 'System Online';
+        statusDot.classList.add("online");
+        statusText.textContent = "System Online";
       }
     }
   }
@@ -185,7 +189,10 @@ const updateSnapshot = async () => {
   try {
     const response = await fetch(`/api/snapshot?t=${Date.now()}`);
 
-    if (response.ok && response.headers.get('content-type')?.includes('image')) {
+    if (
+      response.ok &&
+      response.headers.get("content-type")?.includes("image")
+    ) {
       // Successfully got snapshot image
       const blob = await response.blob();
       const imageUrl = URL.createObjectURL(blob);
@@ -193,12 +200,12 @@ const updateSnapshot = async () => {
       // Update image
       if (ui.snapshotImage) {
         ui.snapshotImage.src = imageUrl;
-        ui.snapshotImage.classList.remove('d-none');
+        ui.snapshotImage.classList.remove("d-none");
       }
 
       // Hide placeholder
       if (ui.snapshotPlaceholder) {
-        ui.snapshotPlaceholder.classList.add('d-none');
+        ui.snapshotPlaceholder.classList.add("d-none");
       }
 
       // Update timestamp
@@ -209,12 +216,12 @@ const updateSnapshot = async () => {
     } else {
       // No snapshot available yet
       if (DEBUG && Math.random() < 0.1) {
-        console.log('[Snapshot] No snapshot available yet');
+        console.log("[Snapshot] No snapshot available yet");
       }
     }
   } catch (error) {
     if (DEBUG && Math.random() < 0.05) {
-      console.warn('[Snapshot] Error fetching snapshot:', error);
+      console.warn("[Snapshot] Error fetching snapshot:", error);
     }
   }
 };
@@ -223,29 +230,32 @@ const updateSnapshotHistory = async () => {
   if (!ui.snapshotHistoryGrid) return;
 
   try {
-    const response = await fetch('/api/snapshot/history');
+    const response = await fetch("/api/snapshot/history");
     const data = await response.json();
 
     if (data.success && data.history && data.history.length > 0) {
       // Clear grid
-      ui.snapshotHistoryGrid.innerHTML = '';
+      ui.snapshotHistoryGrid.innerHTML = "";
 
       // Add thumbnails (most recent first, max 4)
       const thumbnails = data.history.slice(0, 4);
 
       thumbnails.forEach((item, index) => {
-        const thumbnail = document.createElement('div');
-        thumbnail.className = 'snapshot-thumbnail';
+        const thumbnail = document.createElement("div");
+        thumbnail.className = "snapshot-thumbnail";
 
-        const img = document.createElement('img');
+        const img = document.createElement("img");
         img.src = `/api/snapshot/history/${item.filename}?t=${Date.now()}`;
         img.alt = `Snapshot ${index + 1}`;
 
-        const timeLabel = document.createElement('div');
-        timeLabel.className = 'snapshot-thumbnail-time';
+        const timeLabel = document.createElement("div");
+        timeLabel.className = "snapshot-thumbnail-time";
         // Format timestamp: YYYYMMDD_HHMMSS -> HH:MM:SS
-        const timeStr = item.timestamp.split('_')[1];
-        const formatted = `${timeStr.slice(0, 2)}:${timeStr.slice(2, 4)}:${timeStr.slice(4, 6)}`;
+        const timeStr = item.timestamp.split("_")[1];
+        const formatted = `${timeStr.slice(0, 2)}:${timeStr.slice(
+          2,
+          4
+        )}:${timeStr.slice(4, 6)}`;
         timeLabel.textContent = formatted;
 
         thumbnail.appendChild(img);
@@ -255,15 +265,15 @@ const updateSnapshotHistory = async () => {
 
       // Fill remaining slots with placeholders
       while (ui.snapshotHistoryGrid.children.length < 4) {
-        const placeholder = document.createElement('div');
-        placeholder.className = 'snapshot-thumbnail-placeholder';
+        const placeholder = document.createElement("div");
+        placeholder.className = "snapshot-thumbnail-placeholder";
         placeholder.innerHTML = '<i class="fas fa-image"></i>';
         ui.snapshotHistoryGrid.appendChild(placeholder);
       }
     }
   } catch (error) {
     if (DEBUG && Math.random() < 0.05) {
-      console.warn('[Snapshot History] Error fetching history:', error);
+      console.warn("[Snapshot History] Error fetching history:", error);
     }
   }
 };
@@ -271,7 +281,7 @@ const updateSnapshotHistory = async () => {
 const startSnapshotUpdates = () => {
   if (state.snapshotRunning) return;
 
-  console.log('[Snapshot] Starting snapshot updates');
+  console.log("[Snapshot] Starting snapshot updates");
   state.snapshotRunning = true;
 
   // Update immediately
@@ -286,7 +296,7 @@ const startSnapshotUpdates = () => {
 };
 
 const stopSnapshotUpdates = () => {
-  console.log('[Snapshot] Stopping snapshot updates');
+  console.log("[Snapshot] Stopping snapshot updates");
   state.snapshotRunning = false;
 
   if (state.snapshotInterval) {
@@ -296,16 +306,16 @@ const stopSnapshotUpdates = () => {
 
   // Reset snapshot display
   if (ui.snapshotImage) {
-    ui.snapshotImage.src = '';
-    ui.snapshotImage.classList.add('d-none');
+    ui.snapshotImage.src = "";
+    ui.snapshotImage.classList.add("d-none");
   }
 
   if (ui.snapshotPlaceholder) {
-    ui.snapshotPlaceholder.classList.remove('d-none');
+    ui.snapshotPlaceholder.classList.remove("d-none");
   }
 
   if (ui.snapshotTime) {
-    ui.snapshotTime.textContent = '--';
+    ui.snapshotTime.textContent = "--";
   }
 };
 
@@ -416,7 +426,15 @@ const drawSimpleBox = (ctx, box, color, item) => {
   ctx.strokeStyle = color;
   ctx.lineWidth = 3;
   ctx.beginPath();
-  ctx.ellipse(centerX, centerY, Math.max(radiusX, 5), Math.max(radiusY, 5), 0, 0, 2 * Math.PI);
+  ctx.ellipse(
+    centerX,
+    centerY,
+    Math.max(radiusX, 5),
+    Math.max(radiusY, 5),
+    0,
+    0,
+    2 * Math.PI
+  );
   ctx.stroke();
 };
 
@@ -428,7 +446,7 @@ const drawSimpleLabel = (ctx, box, color, item) => {
   if (item.status === "Known" && item.face_confidence > 0) {
     const conf = (item.face_confidence * 100).toFixed(0);
     // Include person ID if available
-    const personIdLabel = item.person_id ? `[${item.person_id}] ` : '';
+    const personIdLabel = item.person_id ? `[${item.person_id}] ` : "";
     label = `${trackId}: ${personIdLabel}${item.name} (${conf}%)`;
   } else if (item.status === "Unknown") {
     label = `${trackId}: Unknown`;
@@ -503,7 +521,9 @@ const pollRecognition = async () => {
   // This function is kept for compatibility but does nothing
 
   if (DEBUG && Math.random() < 0.01) {
-    console.log("[pollRecognition] DISABLED - detection only in snapshot analysis");
+    console.log(
+      "[pollRecognition] DISABLED - detection only in snapshot analysis"
+    );
   }
 
   return; // Do nothing - no polling, no processing
@@ -591,9 +611,13 @@ const renderFaces = () => {
   state.faces.forEach((face) => {
     const card = document.createElement("div");
     card.className = "face-card";
-    const personId = face.person_id ? `<div class="badge bg-primary mb-1">${face.person_id}</div>` : '';
+    const personId = face.person_id
+      ? `<div class="badge bg-primary mb-1">${face.person_id}</div>`
+      : "";
     card.innerHTML = `
-            <img src="${face.image_url || FACE_PLACEHOLDER}" alt="${face.name}" loading="lazy">
+            <img src="${face.image_url || FACE_PLACEHOLDER}" alt="${
+      face.name
+    }" loading="lazy">
             ${personId}
             <strong>${face.name}</strong>
             <small>${new Date(face.created_at).toLocaleString()}</small>
@@ -609,7 +633,9 @@ const startRecognitionLoop = () => {
     return; // Already running
   }
 
-  console.log("[startRecognitionLoop] Starting FPS counter (recognition disabled for clean stream)");
+  console.log(
+    "[startRecognitionLoop] Starting FPS counter (recognition disabled for clean stream)"
+  );
   state.recognitionRunning = true;
   state.lastResults = []; // Clear old results
 
@@ -622,7 +648,9 @@ const startRecognitionLoop = () => {
 };
 
 const stopRecognitionLoop = () => {
-  console.log("[stopRecognitionLoop] Stopping recognition loop and FPS counter");
+  console.log(
+    "[stopRecognitionLoop] Stopping recognition loop and FPS counter"
+  );
   state.recognitionRunning = false;
   state.lastResults = []; // Clear results
 
@@ -661,12 +689,12 @@ const startCamera = async () => {
     // Clear remote source and show video/canvas for webcam
     state.remoteSource = null;
     ui.remoteStream.src = ""; // Clear MJPEG stream
-    ui.remoteStream.classList.add('d-none'); // Hide remote stream img
-    ui.remoteStream.style.display = 'none';
+    ui.remoteStream.classList.add("d-none"); // Hide remote stream img
+    ui.remoteStream.style.display = "none";
 
-    ui.video.style.display = 'block'; // Show video element
+    ui.video.style.display = "block"; // Show video element
     ui.video.srcObject = state.stream;
-    ui.canvas.style.display = 'block'; // Show canvas overlay for webcam
+    ui.canvas.style.display = "block"; // Show canvas overlay for webcam
 
     // Wait for video metadata to load
     await new Promise((resolve) => {
@@ -677,7 +705,7 @@ const startCamera = async () => {
     });
 
     // Wait a bit more to ensure video dimensions are available
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await new Promise((resolve) => setTimeout(resolve, 100));
 
     // Set canvas to match video actual dimensions
     if (ui.video.videoWidth && ui.video.videoHeight) {
@@ -685,8 +713,18 @@ const startCamera = async () => {
       ui.canvas.height = ui.video.videoHeight;
 
       if (DEBUG) {
-        console.log("[DEBUG] Video dimensions:", ui.video.videoWidth, "x", ui.video.videoHeight);
-        console.log("[DEBUG] Canvas dimensions:", ui.canvas.width, "x", ui.canvas.height);
+        console.log(
+          "[DEBUG] Video dimensions:",
+          ui.video.videoWidth,
+          "x",
+          ui.video.videoHeight
+        );
+        console.log(
+          "[DEBUG] Canvas dimensions:",
+          ui.canvas.width,
+          "x",
+          ui.canvas.height
+        );
       }
     }
 
@@ -694,7 +732,9 @@ const startCamera = async () => {
     updateStatus("Streaming", "success");
     startRecognitionLoop();
     // NOTE: Snapshot updates NOT started - only for background detection mode
-    showAlert("Camera started (preview only) - Click RTSP button for detection");
+    showAlert(
+      "Camera started (preview only) - Click RTSP button for detection"
+    );
 
     // Update UI buttons and source display
     if (ui.startCameraBtn) ui.startCameraBtn.classList.add("d-none");
@@ -726,18 +766,18 @@ const stopCamera = () => {
   if (ui.stopCameraBtn) ui.stopCameraBtn.classList.add("d-none");
   if (ui.sourceDisplay) ui.sourceDisplay.textContent = "None";
 
-  ui.remoteStream.classList.add('d-none');
-  ui.remoteStream.style.display = 'none';
+  ui.remoteStream.classList.add("d-none");
+  ui.remoteStream.style.display = "none";
 
   ui.video.srcObject = null;
-  ui.video.style.display = 'block'; // Ensure video visible for next start
+  ui.video.style.display = "block"; // Ensure video visible for next start
   stopRecognitionLoop();
   stopSnapshotUpdates(); // Stop snapshot updates
   updateStatus("Stopped", "warning");
 
   // Clear canvas
   ui.ctx.clearRect(0, 0, ui.canvas.width, ui.canvas.height);
-  ui.canvas.style.display = 'block'; // Ensure canvas is visible for next start
+  ui.canvas.style.display = "block"; // Ensure canvas is visible for next start
 };
 
 const toggleCamera = () => {
@@ -895,7 +935,9 @@ const changeVideoSource = async () => {
   }
 
   // STEP 1: Stop everything and clear frontend state
-  console.log("[changeVideoSource] Stopping current stream and clearing state...");
+  console.log(
+    "[changeVideoSource] Stopping current stream and clearing state..."
+  );
   stopCamera();
   stopRecognitionLoop();
 
@@ -926,16 +968,16 @@ const changeVideoSource = async () => {
 
     if (data.success) {
       // Detect if RTSP source for optimizations
-      state.isRTSP = source.toLowerCase().startsWith('rtsp://');
+      state.isRTSP = source.toLowerCase().startsWith("rtsp://");
 
       // Optimize settings for RTSP
       if (state.isRTSP) {
-        state.frameInterval = 500;  // Faster interval for RTSP
+        state.frameInterval = 500; // Faster interval for RTSP
         state.minFrameInterval = 500;
-        state.adaptiveQuality = 0.6;  // Lower quality for speed
+        state.adaptiveQuality = 0.6; // Lower quality for speed
         console.log("[RTSP] Optimized settings: 500ms interval, quality 0.6");
       } else {
-        state.frameInterval = 300;  // Standard interval for webcam
+        state.frameInterval = 300; // Standard interval for webcam
         state.minFrameInterval = 300;
         state.adaptiveQuality = 0.7;
       }
@@ -945,7 +987,11 @@ const changeVideoSource = async () => {
         statusDiv.innerHTML = `
           <div class="alert alert-success small">
             ✓ ${data.message}
-            ${state.isRTSP ? '<br><small>RTSP optimizations enabled (500ms interval)</small>' : ''}
+            ${
+              state.isRTSP
+                ? "<br><small>RTSP optimizations enabled (500ms interval)</small>"
+                : ""
+            }
           </div>
         `;
       }
@@ -965,15 +1011,17 @@ const changeVideoSource = async () => {
       console.log("[Remote] Setting MJPEG stream to img element");
 
       // Hide video element (not used for RTSP)
-      ui.video.style.display = 'none';
+      ui.video.style.display = "none";
 
       // Show canvas overlay (for drawing bounding boxes)
-      ui.canvas.style.display = 'block';
+      ui.canvas.style.display = "block";
 
       // Show and set remote stream img with cache-busting timestamp
-      ui.remoteStream.src = `/api/stream?source=${encodeURIComponent(source)}&t=${Date.now()}`;
-      ui.remoteStream.classList.remove('d-none');
-      ui.remoteStream.style.display = 'block';
+      ui.remoteStream.src = `/api/stream?source=${encodeURIComponent(
+        source
+      )}&t=${Date.now()}`;
+      ui.remoteStream.classList.remove("d-none");
+      ui.remoteStream.style.display = "block";
 
       console.log("[Remote] Canvas overlay enabled for RTSP");
       console.log("[Remote] About to set onload handler and setTimeout");
@@ -982,7 +1030,7 @@ const changeVideoSource = async () => {
       let onloadCount = 0;
       let lastImageUpdate = Date.now();
 
-      ui.remoteStream.onload = function() {
+      ui.remoteStream.onload = function () {
         onloadCount++;
         lastImageUpdate = Date.now();
         const width = ui.remoteStream.naturalWidth || 1280;
@@ -992,23 +1040,29 @@ const changeVideoSource = async () => {
         if (ui.canvas.width !== width || ui.canvas.height !== height) {
           ui.canvas.width = width;
           ui.canvas.height = height;
-          console.log(`[Remote] Canvas resized to ${width}x${height} (onload #${onloadCount})`);
+          console.log(
+            `[Remote] Canvas resized to ${width}x${height} (onload #${onloadCount})`
+          );
         }
 
         // Only start loop on first load to avoid multiple timers
         if (onloadCount === 1) {
-          console.log("[Remote] Starting recognition loop from onload (first time)");
+          console.log(
+            "[Remote] Starting recognition loop from onload (first time)"
+          );
           startRecognitionLoop();
           // NOTE: Snapshot updates NOT started - user must click RTSP button for detection
         }
       };
 
       // Handle image errors - reload stream if it fails
-      ui.remoteStream.onerror = function() {
+      ui.remoteStream.onerror = function () {
         console.warn("[Remote] Stream image error, attempting to reconnect...");
         setTimeout(() => {
           if (state.remoteSource) {
-            ui.remoteStream.src = `/api/stream?source=${encodeURIComponent(source)}&t=${Date.now()}`;
+            ui.remoteStream.src = `/api/stream?source=${encodeURIComponent(
+              source
+            )}&t=${Date.now()}`;
           }
         }, 1000); // Wait 1 second before reconnecting
       };
@@ -1021,9 +1075,12 @@ const changeVideoSource = async () => {
         }
 
         const timeSinceUpdate = Date.now() - lastImageUpdate;
-        if (timeSinceUpdate > 5000) { // No update for 5 seconds
+        if (timeSinceUpdate > 5000) {
+          // No update for 5 seconds
           console.warn("[Remote] Stream appears frozen, reconnecting...");
-          ui.remoteStream.src = `/api/stream?source=${encodeURIComponent(source)}&t=${Date.now()}`;
+          ui.remoteStream.src = `/api/stream?source=${encodeURIComponent(
+            source
+          )}&t=${Date.now()}`;
           lastImageUpdate = Date.now();
         }
       }, 3000); // Check every 3 seconds
@@ -1040,14 +1097,14 @@ const changeVideoSource = async () => {
         console.log("[Remote] Current state:", {
           remoteSource: state.remoteSource,
           recognitionTimer: state.recognitionTimer,
-          frameInterval: state.frameInterval
+          frameInterval: state.frameInterval,
         });
         startRecognitionLoop();
 
         // AUTO-START background processing for RTSP streams
         try {
           const bgResponse = await fetch("/api/background/start", {
-            method: "POST"
+            method: "POST",
           });
           const bgData = await bgResponse.json();
 
@@ -1055,24 +1112,45 @@ const changeVideoSource = async () => {
             console.log("[Remote] Auto-started background processing");
             startSnapshotUpdates();
             updateStatus("Background Detection Active", "success");
-            showAlert("✓ RTSP connected - Background detection started automatically", "success");
+            showAlert(
+              "✓ RTSP connected - Background detection started automatically",
+              "success"
+            );
           } else {
-            console.warn("[Remote] Failed to auto-start background processing:", bgData.message);
-            showAlert("Source connected - Click RTSP button to start detection", "warning");
+            console.warn(
+              "[Remote] Failed to auto-start background processing:",
+              bgData.message
+            );
+            showAlert(
+              "Source connected - Click RTSP button to start detection",
+              "warning"
+            );
           }
         } catch (error) {
-          console.error("[Remote] Error auto-starting background processing:", error);
-          showAlert("Source connected - Click RTSP button to start detection", "warning");
+          console.error(
+            "[Remote] Error auto-starting background processing:",
+            error
+          );
+          showAlert(
+            "Source connected - Click RTSP button to start detection",
+            "warning"
+          );
         }
 
-        console.log("[Remote] Recognition loop started, timer ID:", state.recognitionTimer);
+        console.log(
+          "[Remote] Recognition loop started, timer ID:",
+          state.recognitionTimer
+        );
 
         // Update UI buttons and source display
         if (ui.startCameraBtn) ui.startCameraBtn.classList.add("d-none");
         if (ui.stopCameraBtn) ui.stopCameraBtn.classList.remove("d-none");
         if (ui.sourceDisplay) {
-          const sourceType = source.startsWith('rtsp://') ? 'RTSP (Detection)' :
-                            source.startsWith('http://') ? 'HTTP (Detection)' : 'Remote (Detection)';
+          const sourceType = source.startsWith("rtsp://")
+            ? "RTSP (Detection)"
+            : source.startsWith("http://")
+            ? "HTTP (Detection)"
+            : "Remote (Detection)";
           ui.sourceDisplay.textContent = sourceType;
         }
       }, 1000);
@@ -1109,18 +1187,20 @@ document
   .getElementById("registerForm")
   .addEventListener("submit", registerFace);
 // Clear Data with confirmation modal
-document
-  .getElementById("clearDataBtn")
-  .addEventListener("click", () => {
-    const clearModal = new bootstrap.Modal(document.getElementById("clearDataModal"));
-    clearModal.show();
-  });
+document.getElementById("clearDataBtn").addEventListener("click", () => {
+  const clearModal = new bootstrap.Modal(
+    document.getElementById("clearDataModal")
+  );
+  clearModal.show();
+});
 
 // Confirm clear button in modal
 const confirmClearBtn = document.getElementById("confirmClearBtn");
 if (confirmClearBtn) {
   confirmClearBtn.addEventListener("click", () => {
-    const clearModal = bootstrap.Modal.getInstance(document.getElementById("clearDataModal"));
+    const clearModal = bootstrap.Modal.getInstance(
+      document.getElementById("clearDataModal")
+    );
     clearModal.hide();
     clearDatabase();
   });
@@ -1155,7 +1235,7 @@ if (stopCameraBtn) {
 
     // Stop frontend stream
     if (state.stream) {
-      state.stream.getTracks().forEach(track => track.stop());
+      state.stream.getTracks().forEach((track) => track.stop());
       state.stream = null;
     }
     if (state.recognitionTimer) {
@@ -1172,7 +1252,7 @@ if (stopCameraBtn) {
     // STOP BACKEND BACKGROUND PROCESSING
     try {
       const response = await fetch("/api/background/stop", {
-        method: "POST"
+        method: "POST",
       });
       const data = await response.json();
       if (data.success) {
@@ -1213,13 +1293,16 @@ if (startRemoteBtn) {
     try {
       // Start background processing on backend
       const response = await fetch("/api/background/start", {
-        method: "POST"
+        method: "POST",
       });
       const data = await response.json();
 
       if (data.success) {
         console.log("[RTSP Button] Background processing started");
-        showAlert("✓ Background detection started - processing every 0.5s", "success");
+        showAlert(
+          "✓ Background detection started - processing every 0.5s",
+          "success"
+        );
 
         // Start snapshot updates to show results
         startSnapshotUpdates();
@@ -1227,15 +1310,27 @@ if (startRemoteBtn) {
         updateStatus("Background Detection Active", "success");
 
         // Update source display to indicate detection is active
-        if (ui.sourceDisplay && ui.sourceDisplay.textContent.includes("Preview")) {
-          ui.sourceDisplay.textContent = ui.sourceDisplay.textContent.replace("(Preview)", "(Detection)");
+        if (
+          ui.sourceDisplay &&
+          ui.sourceDisplay.textContent.includes("Preview")
+        ) {
+          ui.sourceDisplay.textContent = ui.sourceDisplay.textContent.replace(
+            "(Preview)",
+            "(Detection)"
+          );
         }
       } else {
-        showAlert(data.message || "Failed to start background processing", "error");
+        showAlert(
+          data.message || "Failed to start background processing",
+          "error"
+        );
       }
     } catch (error) {
       console.error("[RTSP Button] Error:", error);
-      showAlert("Error starting background detection: " + error.message, "error");
+      showAlert(
+        "Error starting background detection: " + error.message,
+        "error"
+      );
     }
   });
 } else {
@@ -1251,16 +1346,14 @@ if (applyBtn) {
   console.error("[Init] Apply & Connect button NOT FOUND!");
 }
 
-document
-  .getElementById("validateSourceBtn")
-  .addEventListener("click", () => {
-    const source = ui.cameraSourceInput.value.trim();
-    if (source) {
-      validateSource(source);
-    } else {
-      showAlert("Please enter a source to validate", "error");
-    }
-  });
+document.getElementById("validateSourceBtn").addEventListener("click", () => {
+  const source = ui.cameraSourceInput.value.trim();
+  if (source) {
+    validateSource(source);
+  } else {
+    showAlert("Please enter a source to validate", "error");
+  }
+});
 
 // Example buttons
 document.querySelectorAll(".example-btn").forEach((btn) => {
@@ -1283,7 +1376,10 @@ const autoReconnectToStream = async () => {
 
     if (data.success && data.stream_active && data.current_source) {
       console.log("[Auto-Reconnect] Found active stream:", data.current_source);
-      console.log("[Auto-Reconnect] Background processing:", data.background_running ? "ON" : "OFF");
+      console.log(
+        "[Auto-Reconnect] Background processing:",
+        data.background_running ? "ON" : "OFF"
+      );
 
       // Set the source in state
       state.remoteSource = data.current_source;
@@ -1293,15 +1389,17 @@ const autoReconnectToStream = async () => {
       updateStatus("Reconnecting...", "info");
 
       // Show remote stream
-      ui.video.style.display = 'none';
-      ui.canvas.style.display = 'block';
-      ui.remoteStream.src = `/api/stream?source=${encodeURIComponent(data.current_source)}&t=${Date.now()}`;
-      ui.remoteStream.classList.remove('d-none');
-      ui.remoteStream.style.display = 'block';
+      ui.video.style.display = "none";
+      ui.canvas.style.display = "block";
+      ui.remoteStream.src = `/api/stream?source=${encodeURIComponent(
+        data.current_source
+      )}&t=${Date.now()}`;
+      ui.remoteStream.classList.remove("d-none");
+      ui.remoteStream.style.display = "block";
 
       // Setup canvas when image loads
       let onloadCount = 0;
-      ui.remoteStream.onload = function() {
+      ui.remoteStream.onload = function () {
         onloadCount++;
         const width = ui.remoteStream.naturalWidth || 1280;
         const height = ui.remoteStream.naturalHeight || 720;
@@ -1317,9 +1415,13 @@ const autoReconnectToStream = async () => {
           // Only start snapshot updates if background processing is running
           if (backgroundIsRunning) {
             startSnapshotUpdates();
-            console.log("[Auto-Reconnect] Recognition loop and snapshot updates started (background was running)");
+            console.log(
+              "[Auto-Reconnect] Recognition loop and snapshot updates started (background was running)"
+            );
           } else {
-            console.log("[Auto-Reconnect] Recognition loop started (snapshot updates OFF - no background processing)");
+            console.log(
+              "[Auto-Reconnect] Recognition loop started (snapshot updates OFF - no background processing)"
+            );
           }
         }
       };
@@ -1331,14 +1433,16 @@ const autoReconnectToStream = async () => {
         if (ui.startCameraBtn) ui.startCameraBtn.classList.add("d-none");
         if (ui.stopCameraBtn) ui.stopCameraBtn.classList.remove("d-none");
         if (ui.sourceDisplay) {
-          const sourceType = data.current_source.startsWith('rtsp://') ? 'RTSP' :
-                            data.current_source.startsWith('http://') ? 'HTTP' : 'Remote';
+          const sourceType = data.current_source.startsWith("rtsp://")
+            ? "RTSP"
+            : data.current_source.startsWith("http://")
+            ? "HTTP"
+            : "Remote";
           ui.sourceDisplay.textContent = sourceType;
         }
 
         showAlert("✓ Reconnected to active stream", "success");
       }, 1000);
-
     } else {
       console.log("[Auto-Reconnect] No active stream found");
     }
@@ -1363,7 +1467,7 @@ setTimeout(() => {
 window.addEventListener("beforeunload", () => {
   // Only stop local resources, not the backend stream
   if (state.stream) {
-    state.stream.getTracks().forEach(track => track.stop());
+    state.stream.getTracks().forEach((track) => track.stop());
   }
   stopRecognitionLoop(); // Stop frontend polling only
   console.log("[Cleanup] Frontend stopped, backend continues...");
@@ -1378,15 +1482,15 @@ let registeredFaces = [];
 let personsLoadInterval = null;
 
 // Load persons when tab is activated
-document.addEventListener('DOMContentLoaded', () => {
-  const personsTab = document.getElementById('persons-tab');
+document.addEventListener("DOMContentLoaded", () => {
+  const personsTab = document.getElementById("persons-tab");
   if (personsTab) {
-    personsTab.addEventListener('shown.bs.tab', () => {
+    personsTab.addEventListener("shown.bs.tab", () => {
       loadPersonsData();
       // Auto-refresh every 30 seconds when tab is active
       if (!personsLoadInterval) {
         personsLoadInterval = setInterval(() => {
-          const activeTab = document.querySelector('#persons-tab.active');
+          const activeTab = document.querySelector("#persons-tab.active");
           if (activeTab) {
             loadPersonsData();
           }
@@ -1394,7 +1498,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
 
-    personsTab.addEventListener('hidden.bs.tab', () => {
+    personsTab.addEventListener("hidden.bs.tab", () => {
       // Stop auto-refresh when tab is hidden
       if (personsLoadInterval) {
         clearInterval(personsLoadInterval);
@@ -1404,9 +1508,9 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // Setup search
-  const searchBox = document.getElementById('personSearchBox');
+  const searchBox = document.getElementById("personSearchBox");
   if (searchBox) {
-    searchBox.addEventListener('input', (e) => {
+    searchBox.addEventListener("input", (e) => {
       const query = e.target.value.toLowerCase();
       filterAndDisplayPersons(query);
     });
@@ -1414,19 +1518,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Check if we need to auto-open registration modal
   const urlParams = new URLSearchParams(window.location.search);
-  const shouldRegister = urlParams.get('register') === 'true';
-  const storedPersonId = sessionStorage.getItem('registerPersonId');
-  const storedPersonName = sessionStorage.getItem('registerPersonName');
+  const shouldRegister = urlParams.get("register") === "true";
+  const storedPersonId = sessionStorage.getItem("registerPersonId");
+  const storedPersonName = sessionStorage.getItem("registerPersonName");
 
   if (shouldRegister && storedPersonId && storedPersonName) {
     // Wait a bit for page to fully load
     setTimeout(() => {
-      const modal = new bootstrap.Modal(document.getElementById('registerModal'));
+      const modal = new bootstrap.Modal(
+        document.getElementById("registerModal")
+      );
       modal.show();
 
       // Pre-fill the form
-      const personIdField = document.getElementById('personId');
-      const personNameField = document.getElementById('personName');
+      const personIdField = document.getElementById("personId");
+      const personNameField = document.getElementById("personName");
 
       if (personIdField) {
         personIdField.value = storedPersonId;
@@ -1439,8 +1545,8 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       // Clear sessionStorage
-      sessionStorage.removeItem('registerPersonId');
-      sessionStorage.removeItem('registerPersonName');
+      sessionStorage.removeItem("registerPersonId");
+      sessionStorage.removeItem("registerPersonName");
 
       // Clean up URL
       window.history.replaceState({}, document.title, window.location.pathname);
@@ -1450,22 +1556,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // Load persons from API
 async function loadPersonsData() {
-  const content = document.getElementById('personsListContent');
+  const content = document.getElementById("personsListContent");
   if (!content) return;
 
   try {
     // Load persons from attendance system
-    const personsResponse = await fetch('/api/persons');
+    const personsResponse = await fetch("/api/persons");
     const personsData = await personsResponse.json();
 
     if (!personsData.success) {
-      throw new Error(personsData.error || 'Failed to load persons');
+      throw new Error(personsData.error || "Failed to load persons");
     }
 
     allPersons = personsData.persons || [];
 
     // Load registered faces
-    const facesResponse = await fetch('/api/faces');
+    const facesResponse = await fetch("/api/faces");
     const facesData = await facesResponse.json();
     registeredFaces = facesData.faces || [];
 
@@ -1474,9 +1580,8 @@ async function loadPersonsData() {
 
     // Display persons
     filterAndDisplayPersons();
-
   } catch (error) {
-    console.error('[Persons] Error loading data:', error);
+    console.error("[Persons] Error loading data:", error);
     content.innerHTML = `
       <div class="persons-empty-state">
         <i class="fas fa-exclamation-triangle"></i>
@@ -1490,10 +1595,10 @@ async function loadPersonsData() {
 // Update statistics
 function updatePersonsStats() {
   const total = allPersons.length;
-  const withFaces = allPersons.filter(p => hasFaceRegistered(p)).length;
+  const withFaces = allPersons.filter((p) => hasFaceRegistered(p)).length;
 
-  const totalEl = document.getElementById('totalPersons');
-  const withFacesEl = document.getElementById('withFaces');
+  const totalEl = document.getElementById("totalPersons");
+  const withFacesEl = document.getElementById("withFaces");
 
   if (totalEl) totalEl.textContent = total;
   if (withFacesEl) withFacesEl.textContent = withFaces;
@@ -1501,22 +1606,23 @@ function updatePersonsStats() {
 
 // Check if person has registered face
 function hasFaceRegistered(person) {
-  return registeredFaces.some(face =>
-    face.name === person.name || face.person_id === person.person_id
+  return registeredFaces.some(
+    (face) => face.name === person.name || face.person_id === person.person_id
   );
 }
 
 // Filter and display persons
-function filterAndDisplayPersons(searchQuery = '') {
+function filterAndDisplayPersons(searchQuery = "") {
   let filtered = allPersons;
 
   // Apply search
   if (searchQuery) {
-    filtered = filtered.filter(p =>
-      p.name.toLowerCase().includes(searchQuery) ||
-      p.person_id.toLowerCase().includes(searchQuery) ||
-      (p.department && p.department.toLowerCase().includes(searchQuery)) ||
-      (p.email && p.email.toLowerCase().includes(searchQuery))
+    filtered = filtered.filter(
+      (p) =>
+        p.name.toLowerCase().includes(searchQuery) ||
+        p.person_id.toLowerCase().includes(searchQuery) ||
+        (p.department && p.department.toLowerCase().includes(searchQuery)) ||
+        (p.email && p.email.toLowerCase().includes(searchQuery))
     );
   }
 
@@ -1525,7 +1631,7 @@ function filterAndDisplayPersons(searchQuery = '') {
 
 // Display persons list
 function displayPersons(persons) {
-  const content = document.getElementById('personsListContent');
+  const content = document.getElementById("personsListContent");
   if (!content) return;
 
   if (persons.length === 0) {
@@ -1539,14 +1645,16 @@ function displayPersons(persons) {
     return;
   }
 
-  content.innerHTML = persons.map(person => createPersonItemHTML(person)).join('');
+  content.innerHTML = persons
+    .map((person) => createPersonItemHTML(person))
+    .join("");
 }
 
 // Create person item HTML
 function createPersonItemHTML(person) {
   const hasRegisteredFace = hasFaceRegistered(person);
-  const statusClass = hasRegisteredFace ? 'registered' : 'pending';
-  const statusText = hasRegisteredFace ? '✓ Face Registered' : '⏳ Pending';
+  const statusClass = hasRegisteredFace ? "registered" : "pending";
+  const statusText = hasRegisteredFace ? "✓ Face Registered" : "⏳ Pending";
 
   return `
     <div class="person-item">
@@ -1555,17 +1663,41 @@ function createPersonItemHTML(person) {
         <span class="person-id-badge">${escapeHtml(person.person_id)}</span>
       </div>
       <div class="person-info">
-        ${person.email ? `<div><i class="fas fa-envelope"></i>${escapeHtml(person.email)}</div>` : ''}
-        ${person.department ? `<div><i class="fas fa-building"></i>${escapeHtml(person.department)}</div>` : ''}
-        ${person.position ? `<div><i class="fas fa-briefcase"></i>${escapeHtml(person.position)}</div>` : ''}
+        ${
+          person.email
+            ? `<div><i class="fas fa-envelope"></i>${escapeHtml(
+                person.email
+              )}</div>`
+            : ""
+        }
+        ${
+          person.department
+            ? `<div><i class="fas fa-building"></i>${escapeHtml(
+                person.department
+              )}</div>`
+            : ""
+        }
+        ${
+          person.position
+            ? `<div><i class="fas fa-briefcase"></i>${escapeHtml(
+                person.position
+              )}</div>`
+            : ""
+        }
       </div>
       <div class="person-face-status">
         <span class="face-status-badge ${statusClass}">${statusText}</span>
-        ${!hasRegisteredFace ? `
-          <button class="btn-register-face" onclick="goToRegisterFace('${escapeHtml(person.person_id)}', '${escapeHtml(person.name)}')">
+        ${
+          !hasRegisteredFace
+            ? `
+          <button class="btn-register-face" onclick="goToRegisterFace('${escapeHtml(
+            person.person_id
+          )}', '${escapeHtml(person.name)}')">
             <i class="fas fa-camera"></i> Register
           </button>
-        ` : ''}
+        `
+            : ""
+        }
       </div>
     </div>
   `;
@@ -1575,20 +1707,23 @@ function createPersonItemHTML(person) {
 function goToRegisterFace(personId, personName) {
   // Redirect to main page and open registration modal
   // Store person info in sessionStorage
-  sessionStorage.setItem('registerPersonId', personId);
-  sessionStorage.setItem('registerPersonName', personName);
+  sessionStorage.setItem("registerPersonId", personId);
+  sessionStorage.setItem("registerPersonName", personName);
 
   // If already on index.html, just open the modal
-  if (window.location.pathname.includes('index.html') || window.location.pathname === '/') {
+  if (
+    window.location.pathname.includes("index.html") ||
+    window.location.pathname === "/"
+  ) {
     // Open the register modal
-    const modal = new bootstrap.Modal(document.getElementById('registerModal'));
+    const modal = new bootstrap.Modal(document.getElementById("registerModal"));
     modal.show();
 
     // Pre-fill the form
-    document.getElementById('personId').value = personId;
-    document.getElementById('personName').value = personName;
-    document.getElementById('personId').readOnly = true;
-    document.getElementById('personName').readOnly = true;
+    document.getElementById("personId").value = personId;
+    document.getElementById("personName").value = personName;
+    document.getElementById("personId").readOnly = true;
+    document.getElementById("personName").readOnly = true;
   } else {
     // Redirect to index.html with flag to open modal
     window.location.href = `index.html?register=true`;
@@ -1602,7 +1737,7 @@ function refreshPersonsList() {
 
 // HTML escape utility
 function escapeHtml(text) {
-  const div = document.createElement('div');
+  const div = document.createElement("div");
   div.textContent = text;
   return div.innerHTML;
 }

@@ -70,4 +70,4 @@ temp/
 .claude/
 
 ./backend/faces
-./backend/data
+data
